@@ -304,7 +304,9 @@ class Account(NestedSet):
 			self.account_currency = frappe.get_cached_value("Company", self.company, "default_currency")
 			self.currency_explicitly_specified = False
 
-		gl_currency = frappe.db.get_value("GL Entry", {"account": self.name}, "account_currency")
+		gl_currency = frappe.db.get_value(
+			"GL Entry", {"account": self.name, "is_cancelled": 0}, "account_currency"
+		)
 
 		if gl_currency and self.account_currency != gl_currency:
 			if frappe.db.get_value("GL Entry", {"account": self.name}):

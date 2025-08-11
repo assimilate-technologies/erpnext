@@ -1612,7 +1612,7 @@ class StockEntry(StockController):
 						)
 					)
 
-		return process_gl_map(gl_entries)
+		return process_gl_map(gl_entries, from_repost=frappe.flags.through_repost_item_valuation)
 
 	def update_work_order(self):
 		def _validate_work_order(pro_doc):

@@ -35,7 +35,10 @@ erpnext.accounts.PurchaseInvoice = class PurchaseInvoice extends erpnext.buying.
 		this.frm.set_query("expense_account", "items", function () {
 			return {
 				query: "erpnext.controllers.queries.get_expense_account",
-				filters: { company: doc.company },
+				filters: {
+					company: doc.company,
+					disabled: 0,
+				},
 			};
 		});
 	}

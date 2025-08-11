@@ -1287,12 +1287,12 @@ def get_conversion_factor(item_code, uom):
 
 	if variant_of:
 		filters["parent"] = ("in", (item_code, variant_of))
-	conversion_factor = frappe.db.get_value("UOM Conversion Detail", filters, "conversion_factor")
+	conversion_factor = frappe.get_all("UOM Conversion Detail", filters, pluck="conversion_factor")
 	if not conversion_factor:
 		stock_uom = frappe.db.get_value("Item", item_code, "stock_uom")
-		conversion_factor = get_uom_conv_factor(uom, stock_uom)
+		conversion_factor = [get_uom_conv_factor(uom, stock_uom) or 1]
 
-	return {"conversion_factor": conversion_factor or 1.0}
+	return {"conversion_factor": conversion_factor[-1]}
 
 
 @frappe.whitelist()

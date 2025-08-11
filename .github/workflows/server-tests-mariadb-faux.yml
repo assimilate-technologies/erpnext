@@ -1,7 +1,6 @@
 # Tests are skipped for these files but github doesn't allow "passing" hence this is required.
 
 name: Skipped Tests
-permissions: {}
 
 on:
   pull_request:
@@ -10,6 +9,9 @@ on:
       - "**.css"
       - "**.md"
       - "**.html"
+
+permissions:
+  contents: read
 
 jobs:
   test:

@@ -28,12 +28,14 @@ payment_method = [
 		"payment_gateway": "_Test Gateway",
 		"payment_account": "_Test Bank - _TC",
 		"currency": "INR",
+		"company": "_Test Company",
 	},
 	{
 		"doctype": "Payment Gateway Account",
 		"payment_gateway": "_Test Gateway",
 		"payment_account": "_Test Bank USD - _TC",
 		"currency": "USD",
+		"company": "_Test Company",
 	},
 ]
 
@@ -46,7 +48,11 @@ class TestPaymentRequest(FrappeTestCase):
 		for method in payment_method:
 			if not frappe.db.get_value(
 				"Payment Gateway Account",
-				{"payment_gateway": method["payment_gateway"], "currency": method["currency"]},
+				{
+					"payment_gateway": method["payment_gateway"],
+					"currency": method["currency"],
+					"company": method["company"],
+				},
 				"name",
 			):
 				frappe.get_doc(method).insert(ignore_permissions=True)
@@ -60,7 +66,7 @@ class TestPaymentRequest(FrappeTestCase):
 			dt="Sales Order",
 			dn=so_inr.name,
 			recipient_id="saurabh@erpnext.com",
-			payment_gateway_account="_Test Gateway - INR",
+			payment_gateway_account="_Test Gateway - INR - _TC",
 		)
 
 		self.assertEqual(pr.reference_doctype, "Sales Order")
@@ -74,7 +80,7 @@ class TestPaymentRequest(FrappeTestCase):
 			dt="Sales Invoice",
 			dn=si_usd.name,
 			recipient_id="saurabh@erpnext.com",
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 		)
 
 		self.assertEqual(pr.reference_doctype, "Sales Invoice")
@@ -95,7 +101,7 @@ class TestPaymentRequest(FrappeTestCase):
 			party="_Test Supplier USD",
 			recipient_id="user@example.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			submit_doc=1,
 			return_doc=1,
 		)
@@ -119,7 +125,7 @@ class TestPaymentRequest(FrappeTestCase):
 			dn=purchase_invoice.name,
 			recipient_id="user@example.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			return_doc=1,
 		)
 
@@ -138,7 +144,7 @@ class TestPaymentRequest(FrappeTestCase):
 			dn=purchase_invoice.name,
 			recipient_id="user@example.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			return_doc=1,
 		)
 
@@ -162,7 +168,7 @@ class TestPaymentRequest(FrappeTestCase):
 			dn=so_inr.name,
 			recipient_id="saurabh@erpnext.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - INR",
+			payment_gateway_account="_Test Gateway - INR - _TC",
 			submit_doc=1,
 			return_doc=1,
 		)
@@ -184,7 +190,7 @@ class TestPaymentRequest(FrappeTestCase):
 			dn=si_usd.name,
 			recipient_id="saurabh@erpnext.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			submit_doc=1,
 			return_doc=1,
 		)
@@ -228,7 +234,7 @@ class TestPaymentRequest(FrappeTestCase):
 			dn=si_usd.name,
 			recipient_id="saurabh@erpnext.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			submit_doc=1,
 			return_doc=1,
 		)
@@ -328,7 +334,7 @@ class TestPaymentRequest(FrappeTestCase):
 
 		self.assertEqual(pe.paid_amount, 800)  # paid amount set from pr's outstanding amount
 		self.assertEqual(pe.references[0].allocated_amount, 800)
-		self.assertEqual(pe.references[0].outstanding_amount, 800)  # for Orders it is not zero
+		self.assertEqual(pe.references[0].outstanding_amount, 0)  # Also for orders it will zero
 		self.assertEqual(pe.references[0].payment_request, pr.name)
 
 		so.load_from_db()

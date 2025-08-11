@@ -346,6 +346,33 @@ class TestAsset(AssetSetup):
 		si.cancel()
 		self.assertEqual(frappe.db.get_value("Asset", asset.name, "status"), "Partially Depreciated")
 
+	def test_asset_status_after_sales_invoice_cancel(self):
+		from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
+
+		asset = create_asset(
+			calculate_depreciation=1,
+			available_for_use_date="2020-04-01",
+			purchase_date="2020-04-01",
+			expected_value_after_useful_life=0,
+			total_number_of_depreciations=5,
+			opening_number_of_booked_depreciations=2,
+			frequency_of_depreciation=12,
+			depreciation_start_date="2023-03-31",
+			opening_accumulated_depreciation=24000,
+			gross_purchase_amount=60000,
+			submit=1,
+		)
+
+		si = create_sales_invoice(
+			item_code="Macbook Pro", asset=asset.name, qty=1, rate=40000, posting_date=getdate("2023-05-23")
+		)
+		asset.load_from_db()
+		self.assertEqual(frappe.db.get_value("Asset", asset.name, "status"), "Sold")
+
+		si.cancel()
+		asset.load_from_db()
+		self.assertEqual(frappe.db.get_value("Asset", asset.name, "status"), "Partially Depreciated")
+
 	def test_gle_made_by_asset_sale_for_existing_asset(self):
 		from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
 

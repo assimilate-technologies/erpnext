@@ -145,7 +145,7 @@ class SerialandBatchBundle(Document):
 				)
 
 		elif not frappe.db.exists("Stock Ledger Entry", {"voucher_detail_no": self.voucher_detail_no}):
-			if self.voucher_type == "Delivery Note" and frappe.db.exists(
+			if self.voucher_type in ["Delivery Note", "Sales Invoice"] and frappe.db.exists(
 				"Packed Item", self.voucher_detail_no
 			):
 				return

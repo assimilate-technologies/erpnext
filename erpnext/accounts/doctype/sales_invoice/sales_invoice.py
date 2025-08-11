@@ -1370,8 +1370,9 @@ class SalesInvoice(SellingController):
 						)
 						asset.db_set("disposal_date", None)
 						add_asset_activity(asset.name, _("Asset returned"))
+						asset_status = asset.get_status()
 
-						if asset.calculate_depreciation:
+						if asset.calculate_depreciation and not asset_status == "Fully Depreciated":
 							posting_date = (
 								frappe.db.get_value("Sales Invoice", self.return_against, "posting_date")
 								if self.is_return

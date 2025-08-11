@@ -505,6 +505,7 @@ class PurchaseOrder(BuyingController):
 		self.ignore_linked_doctypes = (
 			"GL Entry",
 			"Payment Ledger Entry",
+			"Advance Payment Ledger Entry",
 			"Unreconcile Payment",
 			"Unreconcile Payment Entries",
 		)
@@ -719,6 +720,7 @@ def close_or_unclose_purchase_orders(names, status):
 def set_missing_values(source, target):
 	target.run_method("set_missing_values")
 	target.run_method("calculate_taxes_and_totals")
+	target.run_method("set_use_serial_batch_fields")
 
 
 @frappe.whitelist()

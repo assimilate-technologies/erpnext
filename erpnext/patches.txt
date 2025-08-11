@@ -356,12 +356,12 @@ erpnext.patches.v14_0.create_accounting_dimensions_in_supplier_quotation
 erpnext.patches.v14_0.update_zero_asset_quantity_field
 execute:frappe.db.set_single_value("Buying Settings", "project_update_frequency", "Each Transaction")
 erpnext.patches.v14_0.update_total_asset_cost_field
+erpnext.patches.v15_0.allow_on_submit_dimensions_for_repostable_doctypes #2025-06-19
 erpnext.patches.v14_0.create_accounting_dimensions_in_reconciliation_tool
-erpnext.patches.v15_0.allow_on_submit_dimensions_for_repostable_doctypes
 erpnext.patches.v14_0.update_flag_for_return_invoices #2024-03-22
 erpnext.patches.v15_0.create_accounting_dimensions_in_payment_request
 erpnext.patches.v14_0.update_pos_return_ledger_entries #2024-08-16
-erpnext.patches.v15_0.create_advance_payment_ledger_records
+erpnext.patches.v15_0.create_advance_payment_ledger_records #2025-07-08
 # below migration patch should always run last
 erpnext.patches.v14_0.migrate_gl_to_payment_ledger
 erpnext.stock.doctype.delivery_note.patches.drop_unused_return_against_index # 2023-12-20
@@ -412,8 +412,10 @@ erpnext.patches.v15_0.drop_sle_indexes
 erpnext.patches.v15_0.update_pick_list_fields
 erpnext.patches.v15_0.update_pegged_currencies
 erpnext.patches.v15_0.set_company_on_pos_inv_merge_log
+erpnext.patches.v15_0.update_payment_ledger_entries_against_advance_doctypes
 erpnext.patches.v15_0.rename_price_list_to_buying_price_list
 erpnext.patches.v15_0.patch_missing_buying_price_list_in_material_request
 erpnext.patches.v15_0.remove_sales_partner_from_consolidated_sales_invoice
-erpnext.patches.v15_0.repost_gl_entries_with_no_account_subcontracting #2025-07-31
+erpnext.patches.v15_0.repost_gl_entries_with_no_account_subcontracting #2025-08-04
 execute:frappe.db.set_single_value("Accounts Settings", "fetch_valuation_rate_for_internal_transaction", 1)
+erpnext.patches.v15_0.add_company_payment_gateway_account
