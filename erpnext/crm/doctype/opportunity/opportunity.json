@@ -152,7 +152,6 @@
    "no_copy": 1
   },
   {
-   "default": "Sales",
    "fieldname": "opportunity_type",
    "fieldtype": "Link",
    "in_list_view": 1,

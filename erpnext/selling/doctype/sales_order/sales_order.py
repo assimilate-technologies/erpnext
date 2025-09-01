@@ -977,6 +977,11 @@ def make_delivery_note(source_name, target_doc=None, kwargs=None):
 	def is_unit_price_row(source):
 		return has_unit_price_items and source.qty == 0
 
+	def select_item(d):
+		filtered_items = kwargs.get("filtered_children", [])
+		child_filter = d.name in filtered_items if filtered_items else True
+		return child_filter
+
 	def set_missing_values(source, target):
 		if kwargs.get("ignore_pricing_rule"):
 			# Skip pricing rule when the dn is creating from the pick list
@@ -1042,7 +1047,7 @@ def make_delivery_note(source_name, target_doc=None, kwargs=None):
 				"name": "so_detail",
 				"parent": "against_sales_order",
 			},
-			"condition": condition,
+			"condition": lambda d: condition(d) and select_item(d),
 			"postprocess": update_item,
 		}
 
@@ -1098,7 +1103,12 @@ def make_delivery_note(source_name, target_doc=None, kwargs=None):
 
 
 @frappe.whitelist()
-def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
+def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False, args=None):
+	if args is None:
+		args = {}
+	if isinstance(args, str):
+		args = json.loads(args)
+
 	# 0 qty is accepted, as the qty is uncertain for some items
 	has_unit_price_items = frappe.db.get_value("Sales Order", source_name, "has_unit_price_items")
 
@@ -1134,6 +1144,17 @@ def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
 		target.debit_to = get_party_account("Customer", source.customer, source.company)
 
 	def update_item(source, target, source_parent):
+		def get_billed_qty(so_item_name):
+			from frappe.query_builder.functions import Sum
+
+			table = frappe.qb.DocType("Sales Invoice Item")
+			query = (
+				frappe.qb.from_(table)
+				.select(Sum(table.qty).as_("qty"))
+				.where((table.docstatus == 1) & (table.so_detail == so_item_name))
+			)
+			return query.run(pluck="qty")[0] or 0
+
 		if source_parent.has_unit_price_items:
 			# 0 Amount rows (as seen in Unit Price Items) should be mapped as it is
 			pending_amount = flt(source.amount) - flt(source.billed_amt)
@@ -1143,8 +1164,8 @@ def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
 
 		target.base_amount = target.amount * flt(source_parent.conversion_rate)
 		target.qty = (
-			target.amount / flt(source.rate)
-			if (source.rate and source.billed_amt)
+			source.qty - get_billed_qty(source.name)
+			if (source.qty and source.billed_amt)
 			else (source.qty if is_unit_price_row(source) else source.qty - source.returned_qty)
 		)
 
@@ -1157,6 +1178,11 @@ def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
 
 			if cost_center:
 				target.cost_center = cost_center
+
+	def select_item(d):
+		filtered_items = args.get("filtered_children", [])
+		child_filter = d.name in filtered_items if filtered_items else True
+		return child_filter
 
 	doclist = get_mapped_doc(
 		"Sales Order",
@@ -1182,7 +1208,8 @@ def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
 					True
 					if is_unit_price_row(doc)
 					else (doc.qty and (doc.base_amount == 0 or abs(doc.billed_amt) < abs(doc.amount)))
-				),
+				)
+				and select_item(doc),
 			},
 			"Sales Taxes and Charges": {
 				"doctype": "Sales Taxes and Charges",
@@ -1785,7 +1812,9 @@ def create_pick_list(source_name, target_doc=None):
 
 	doc.purpose = "Delivery"
 
-	doc.set_item_locations()
+	# Only auto-assign serial numbers if not picking manually
+	if not doc.pick_manually:
+		doc.set_item_locations()
 
 	return doc
 

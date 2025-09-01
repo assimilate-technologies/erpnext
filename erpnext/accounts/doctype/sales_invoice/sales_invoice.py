@@ -700,6 +700,7 @@ class SalesInvoice(SellingController):
 				"allow_edit_discount": pos.get("allow_user_to_edit_discount"),
 				"campaign": pos.get("campaign"),
 				"allow_print_before_pay": pos.get("allow_print_before_pay"),
+				"skip_default_payment": pos.get("disable_grand_total_to_default_mop"),
 			}
 
 	def update_time_sheet(self, sales_invoice):
@@ -1206,7 +1207,6 @@ class SalesInvoice(SellingController):
 
 				self.make_exchange_gain_loss_journal()
 			elif self.docstatus == 2:
-				cancel_exchange_gain_loss_journal(frappe._dict(doctype=self.doctype, name=self.name))
 				make_reverse_gl_entries(voucher_type=self.doctype, voucher_no=self.name)
 
 			if update_outstanding == "No":

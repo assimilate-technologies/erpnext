@@ -456,7 +456,7 @@ class AssetDepreciationSchedule(Document):
 				continue
 			depreciation_amount = flt(depreciation_amount, asset_doc.precision("gross_purchase_amount"))
 			value_after_depreciation = flt(
-				value_after_depreciation - flt(depreciation_amount),
+				flt(value_after_depreciation) - flt(depreciation_amount),
 				asset_doc.precision("gross_purchase_amount"),
 			)
 

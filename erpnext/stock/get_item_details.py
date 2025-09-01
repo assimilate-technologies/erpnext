@@ -567,20 +567,15 @@ def get_item_warehouse(item, args, overwrite_warehouse, defaults=None):
 			or args.get("warehouse")
 		)
 
-		if not warehouse:
-			defaults = frappe.defaults.get_defaults() or {}
-			warehouse_exists = frappe.db.exists(
-				"Warehouse", {"name": defaults.default_warehouse, "company": args.company}
-			)
-			if defaults.get("default_warehouse") and warehouse_exists:
-				warehouse = defaults.default_warehouse
-
 	else:
 		warehouse = args.get("warehouse")
 
 	if not warehouse:
-		default_warehouse = frappe.db.get_single_value("Stock Settings", "default_warehouse")
-		if frappe.db.get_value("Warehouse", default_warehouse, "company") == args.company:
+		default_warehouse = frappe.get_single_value("Stock Settings", "default_warehouse")
+		if (
+			default_warehouse
+			and frappe.get_cached_value("Warehouse", default_warehouse, "company") == args.company
+		):
 			return default_warehouse
 
 	return warehouse
@@ -1282,17 +1277,33 @@ def get_pos_profile(company, pos_profile=None, user=None):
 
 @frappe.whitelist()
 def get_conversion_factor(item_code, uom):
-	variant_of = frappe.db.get_value("Item", item_code, "variant_of", cache=True)
-	filters = {"parent": item_code, "uom": uom}
+	item = frappe.get_cached_value("Item", item_code, ["variant_of", "stock_uom"], as_dict=True)
+	if not item_code or not item or uom == item.stock_uom:
+		return {"conversion_factor": 1.0}
 
-	if variant_of:
-		filters["parent"] = ("in", (item_code, variant_of))
-	conversion_factor = frappe.get_all("UOM Conversion Detail", filters, pluck="conversion_factor")
+	item_codes = [item_code]
+	if item.variant_of:
+		item_codes.append(item.variant_of)
+
+	parent = frappe.qb.DocType("Item")
+	child = frappe.qb.DocType("UOM Conversion Detail")
+	query = (
+		frappe.qb.from_(parent)
+		.join(child)
+		.on(parent.name == child.parent)
+		.select(child.conversion_factor)
+		.where((parent.name.isin(item_codes)) & (child.uom == uom))
+		.orderby(parent.has_variants)
+		.limit(1)
+	)
+	conversion_factor = query.run(pluck="conversion_factor")
+
 	if not conversion_factor:
-		stock_uom = frappe.db.get_value("Item", item_code, "stock_uom")
-		conversion_factor = [get_uom_conv_factor(uom, stock_uom) or 1]
+		conversion_factor = get_uom_conv_factor(uom, item.stock_uom)
+	else:
+		conversion_factor = conversion_factor[0]
 
-	return {"conversion_factor": conversion_factor[-1]}
+	return {"conversion_factor": conversion_factor or 1.0}
 
 
 @frappe.whitelist()

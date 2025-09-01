@@ -4668,6 +4668,59 @@ class TestSalesInvoice(FrappeTestCase):
 
 		doc.db_set("do_not_use_batchwise_valuation", original_value)
 
+	def test_system_generated_exchange_gain_or_loss_je_after_repost(self):
+		from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+		from erpnext.accounts.doctype.repost_accounting_ledger.test_repost_accounting_ledger import (
+			update_repost_settings,
+		)
+
+		update_repost_settings()
+
+		si = create_sales_invoice(
+			customer="_Test Customer USD",
+			debit_to="_Test Receivable USD - _TC",
+			currency="USD",
+			conversion_rate=80,
+		)
+
+		pe = get_payment_entry("Sales Invoice", si.name)
+		pe.reference_no = "10"
+		pe.reference_date = nowdate()
+		pe.paid_from_account_currency = si.currency
+		pe.paid_to_account_currency = "INR"
+		pe.source_exchange_rate = 85
+		pe.target_exchange_rate = 1
+		pe.paid_amount = si.outstanding_amount
+		pe.insert()
+		pe.submit()
+
+		ral = frappe.new_doc("Repost Accounting Ledger")
+		ral.company = si.company
+		ral.append("vouchers", {"voucher_type": si.doctype, "voucher_no": si.name})
+		ral.save()
+		ral.submit()
+
+		je = frappe.qb.DocType("Journal Entry")
+		jea = frappe.qb.DocType("Journal Entry Account")
+		q = (
+			(
+				frappe.qb.from_(je)
+				.join(jea)
+				.on(je.name == jea.parent)
+				.select(je.docstatus)
+				.where(
+					(je.voucher_type == "Exchange Gain Or Loss")
+					& (jea.reference_name == si.name)
+					& (jea.reference_type == "Sales Invoice")
+					& (je.is_system_generated == 1)
+				)
+			)
+			.limit(1)
+			.run()
+		)
+
+		self.assertEqual(q[0][0], 1)
+
 
 def make_item_for_si(item_code, properties=None):
 	from erpnext.stock.doctype.item.test_item import make_item

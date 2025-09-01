@@ -23,6 +23,14 @@ frappe.ui.form.on("Job Card", {
 			};
 		});
 
+		frm.set_query("item_code", "scrap_items", () => {
+			return {
+				filters: {
+					disabled: 0,
+				},
+			};
+		});
+
 		frm.set_indicator_formatter("sub_operation", function (doc) {
 			if (doc.status == "Pending") {
 				return "red";

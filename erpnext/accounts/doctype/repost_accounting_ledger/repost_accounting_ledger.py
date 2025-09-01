@@ -178,7 +178,7 @@ def start_repost(account_repost_doc=str) -> None:
 				if doc.doctype in ["Sales Invoice", "Purchase Invoice"]:
 					if not repost_doc.delete_cancelled_entries:
 						doc.docstatus = 2
-						doc.make_gl_entries_on_cancel()
+						doc.make_gl_entries_on_cancel(from_repost=True)
 
 					doc.docstatus = 1
 					if doc.doctype == "Sales Invoice":
@@ -190,7 +190,7 @@ def start_repost(account_repost_doc=str) -> None:
 				elif doc.doctype == "Purchase Receipt":
 					if not repost_doc.delete_cancelled_entries:
 						doc.docstatus = 2
-						doc.make_gl_entries_on_cancel()
+						doc.make_gl_entries_on_cancel(from_repost=True)
 
 					doc.docstatus = 1
 					doc.make_gl_entries(from_repost=True)
