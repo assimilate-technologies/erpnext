@@ -159,8 +159,9 @@ erpnext.buying = {
 				});
 			}
 
-			company(){
-				if(!frappe.meta.has_field(this.frm.doc.doctype, "billing_address")) return;
+			company() {
+				super.company();
+				if (!frappe.meta.has_field(this.frm.doc.doctype, "billing_address")) return;
 
 				frappe.call({
 					method: "erpnext.setup.doctype.company.company.get_billing_shipping_address",
@@ -172,8 +173,11 @@ erpnext.buying = {
 					callback: (r) => {
 						this.frm.set_value("billing_address", r.message.primary_address || "");
 
-						if(!frappe.meta.has_field(this.frm.doc.doctype, "shipping_address")) return;
-						this.frm.set_value("shipping_address", r.message.shipping_address || "");
+						if (!frappe.meta.has_field(this.frm.doc.doctype, "shipping_address")) return;
+						this.frm.set_value(
+							"shipping_address",
+							r.message.shipping_address || this.frm.doc.shipping_address || ""
+						);
 					},
 				});
 				erpnext.utils.set_letter_head(this.frm)
