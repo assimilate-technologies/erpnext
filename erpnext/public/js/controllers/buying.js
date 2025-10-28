@@ -17,7 +17,17 @@ erpnext.buying = {
 				this.setup_queries(doc, cdt, cdn);
 				super.onload();
 
-				this.frm.set_query('shipping_rule', function() {
+				if (["Purchase Order", "Purchase Receipt", "Purchase Invoice"].includes(this.frm.doctype)) {
+					this.frm.set_query("supplier", function () {
+						return {
+							filters: {
+								is_transporter: 0,
+							},
+						};
+					});
+				}
+
+				this.frm.set_query("shipping_rule", function () {
 					return {
 						filters: {
 							"shipping_rule_type": "Buying"
@@ -171,13 +181,15 @@ erpnext.buying = {
 						shipping_address: this.frm.doc.shipping_address
 					},
 					callback: (r) => {
-						this.frm.set_value("billing_address", r.message.primary_address || "");
+						if (!this.frm.doc.billing_address)
+							this.frm.set_value("billing_address", r.message.primary_address || "");
 
-						if (!frappe.meta.has_field(this.frm.doc.doctype, "shipping_address")) return;
-						this.frm.set_value(
-							"shipping_address",
-							r.message.shipping_address || this.frm.doc.shipping_address || ""
-						);
+						if (
+							!frappe.meta.has_field(this.frm.doc.doctype, "shipping_address") ||
+							this.frm.doc.shipping_address
+						)
+							return;
+						this.frm.set_value("shipping_address", r.message.shipping_address || "");
 					},
 				});
 				erpnext.utils.set_letter_head(this.frm)

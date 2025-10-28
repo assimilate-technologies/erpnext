@@ -294,7 +294,7 @@ class SerialandBatchBundle(Document):
 			}
 		)
 
-		if self.returned_against and self.docstatus == 1:
+		if (self.returned_against or self.voucher_type == "Stock Reconciliation") and self.docstatus == 1:
 			kwargs["ignore_voucher_detail_no"] = self.voucher_detail_no
 
 		if self.docstatus == 1:
@@ -518,12 +518,15 @@ class SerialandBatchBundle(Document):
 				else:
 					d.incoming_rate = abs(flt(sn_obj.batch_avg_rate.get(d.batch_no)))
 
-				available_qty = flt(sn_obj.available_qty.get(d.batch_no), d.precision("qty"))
-				if self.docstatus == 1:
-					available_qty += flt(d.qty, d.precision("qty"))
+				precision = d.precision("qty")
+				for field in ["available_qty", "total_qty"]:
+					value = getattr(sn_obj, field)
+					available_qty = flt(value.get(d.batch_no), precision)
+					if self.docstatus == 1:
+						available_qty += flt(d.qty, precision)
 
-				if not allow_negative_stock:
-					self.validate_negative_batch(d.batch_no, available_qty)
+					if not allow_negative_stock:
+						self.validate_negative_batch(d.batch_no, available_qty)
 
 			d.stock_value_difference = flt(d.qty) * flt(d.incoming_rate)
 
@@ -2677,7 +2680,10 @@ def get_stock_ledgers_for_serial_nos(kwargs):
 		else:
 			query = query.where(stock_ledger_entry[field] == kwargs.get(field))
 
-	if kwargs.voucher_no:
+	if kwargs.ignore_voucher_detail_no:
+		query = query.where(stock_ledger_entry.voucher_detail_no != kwargs.ignore_voucher_detail_no)
+
+	elif kwargs.voucher_no:
 		query = query.where(stock_ledger_entry.voucher_no != kwargs.voucher_no)
 
 	return query.run(as_dict=True)
