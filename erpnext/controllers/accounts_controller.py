@@ -308,6 +308,52 @@ class AccountsController(TransactionBase):
 		self.set_default_letter_head()
 		self.validate_company_in_accounting_dimension()
 		self.validate_party_address_and_contact()
+		self.validate_company_linked_addresses()
+
+	def validate_company_linked_addresses(self):
+		address_fields = []
+		sales_doctypes = ("Quotation", "Sales Order", "Delivery Note", "Sales Invoice")
+		purchase_doctypes = ("Purchase Order", "Purchase Receipt", "Purchase Invoice", "Supplier Quotation")
+
+		if self.doctype in sales_doctypes:
+			address_fields = ["dispatch_address_name", "company_address"]
+		elif self.doctype in purchase_doctypes:
+			address_fields = ["billing_address", "shipping_address"]
+
+		if not address_fields:
+			return
+
+		# Determine if drop ship applies
+		is_drop_ship = self.doctype in {
+			"Purchase Order",
+			"Sales Order",
+			"Sales Invoice",
+		} and self.is_drop_ship(self.items)
+
+		for field in address_fields:
+			address = self.get(field)
+
+			if (field in ["dispatch_address_name", "shipping_address"]) and is_drop_ship:
+				continue
+
+			if address and not frappe.db.exists(
+				"Dynamic Link",
+				{
+					"parent": address,
+					"parenttype": "Address",
+					"link_doctype": "Company",
+					"link_name": self.company,
+				},
+			):
+				frappe.throw(
+					_("{0} does not belong to the Company {1}.").format(
+						_(self.meta.get_label(field)), bold(self.company)
+					)
+				)
+
+	@staticmethod
+	def is_drop_ship(items):
+		return any(item.delivered_by_supplier for item in items)
 
 	def set_default_letter_head(self):
 		if hasattr(self, "letter_head") and not self.letter_head:
@@ -362,6 +408,24 @@ class AccountsController(TransactionBase):
 
 		for _doctype in repost_doctypes:
 			dt = frappe.qb.DocType(_doctype)
+
+			cancelled_entries = (
+				frappe.qb.from_(dt)
+				.select(dt.parent, dt.parenttype)
+				.where((dt.voucher_type == self.doctype) & (dt.voucher_no == self.name) & (dt.docstatus == 2))
+				.run(as_dict=True)
+			)
+
+			if cancelled_entries:
+				entries = "<br>".join([get_link_to_form(d.parenttype, d.parent) for d in cancelled_entries])
+
+				frappe.throw(
+					_(
+						"The following cancelled repost entries exist for <b>{0}</b>:<br><br>{1}<br><br>"
+						"Kindly delete these entries before continuing."
+					).format(self.name, entries)
+				)
+
 			rows = (
 				frappe.qb.from_(dt)
 				.select(dt.name, dt.parent, dt.parenttype)

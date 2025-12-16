@@ -2581,6 +2581,7 @@ class TestDeliveryNote(FrappeTestCase):
 		dn = make_delivery_note(so.name)
 		dn.submit()
 		self.assertEqual(dn.per_billed, 0)
+		self.assertEqual(dn.status, "To Bill")
 
 		si = make_sales_invoice(dn.name)
 		si.location = "Test Location"
@@ -2595,6 +2596,7 @@ class TestDeliveryNote(FrappeTestCase):
 		dn.load_from_db()
 		self.assertEqual(dn.per_billed, 100)
 		self.assertEqual(dn.per_returned, 100)
+		self.assertEqual(returned.status, "Return")
 
 	def test_sales_return_for_product_bundle(self):
 		from erpnext.selling.doctype.product_bundle.test_product_bundle import make_product_bundle
