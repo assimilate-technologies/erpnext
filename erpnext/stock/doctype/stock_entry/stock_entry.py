@@ -1838,9 +1838,7 @@ class StockEntry(StockController):
 		if self.purpose == "Material Issue":
 			ret["expense_account"] = item.get("expense_account") or item_group_defaults.get("expense_account")
 
-		if (self.purpose == "Manufacture" and not args.get("is_finished_item")) or not ret.get(
-			"expense_account"
-		):
+		if not ret.get("expense_account"):
 			ret["expense_account"] = frappe.get_cached_value(
 				"Company", self.company, "stock_adjustment_account"
 			)
@@ -1950,8 +1948,8 @@ class StockEntry(StockController):
 				"`tabStock Entry Detail`.`item_code`",
 				"`tabStock Entry Detail`.`item_name`",
 				"`tabStock Entry Detail`.`description`",
-				"`tabStock Entry Detail`.`qty`",
-				"`tabStock Entry Detail`.`transfer_qty`",
+				"sum(`tabStock Entry Detail`.qty) as qty",
+				"sum(`tabStock Entry Detail`.transfer_qty) as transfer_qty",
 				"`tabStock Entry Detail`.`stock_uom`",
 				"`tabStock Entry Detail`.`uom`",
 				"`tabStock Entry Detail`.`basic_rate`",
@@ -1970,6 +1968,7 @@ class StockEntry(StockController):
 				["Stock Entry Detail", "docstatus", "=", 1],
 			],
 			order_by="`tabStock Entry Detail`.`idx` desc, `tabStock Entry Detail`.`is_finished_item` desc",
+			group_by="`tabStock Entry Detail`.`item_code`",
 		)
 
 	@frappe.whitelist()

@@ -1520,18 +1520,14 @@ frappe.ui.form.on("Payment Entry", {
 				"Can refer row only if the charge type is 'On Previous Row Amount' or 'Previous Row Total'"
 			);
 			d.row_id = "";
-		} else if (
-			(d.charge_type == "On Previous Row Amount" || d.charge_type == "On Previous Row Total") &&
-			d.row_id
-		) {
+		} else if (d.charge_type == "On Previous Row Amount" || d.charge_type == "On Previous Row Total") {
 			if (d.idx == 1) {
 				msg = __(
 					"Cannot select charge type as 'On Previous Row Amount' or 'On Previous Row Total' for first row"
 				);
 				d.charge_type = "";
 			} else if (!d.row_id) {
-				msg = __("Please specify a valid Row ID for row {0} in table {1}", [d.idx, __(d.doctype)]);
-				d.row_id = "";
+				d.row_id = d.idx - 1;
 			} else if (d.row_id && d.row_id >= d.idx) {
 				msg = __(
 					"Cannot refer row number greater than or equal to current row number for this Charge type"

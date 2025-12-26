@@ -229,7 +229,8 @@
    "fieldtype": "Currency",
    "label": "Net Purchase Amount",
    "mandatory_depends_on": "eval:(!doc.is_composite_asset || doc.docstatus==1)",
-   "options": "Company:company:default_currency"
+   "options": "Company:company:default_currency",
+   "read_only_depends_on": "eval: doc.is_composite_asset"
   },
   {
    "fieldname": "available_for_use_date",
@@ -596,7 +597,7 @@
    "link_fieldname": "target_asset"
   }
  ],
- "modified": "2025-11-17 18:01:51.417942",
+ "modified": "2025-12-23 16:01:10.195932",
  "modified_by": "Administrator",
  "module": "Assets",
  "name": "Asset",
