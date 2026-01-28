@@ -12,6 +12,7 @@ from frappe.utils import cint, flt, formatdate, get_link_to_form, getdate, now
 import erpnext
 from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
 	get_accounting_dimensions,
+	get_checks_for_pl_and_bs_accounts,
 )
 from erpnext.accounts.doctype.accounting_dimension_filter.accounting_dimension_filter import (
 	get_dimension_filter_map,
@@ -612,6 +613,18 @@ def update_accounting_dimensions(round_off_gle):
 
 		for dimension in dimensions:
 			round_off_gle[dimension] = dimension_values.get(dimension)
+	else:
+		report_type = frappe.get_cached_value("Account", round_off_gle.account, "report_type")
+		for dimension in get_checks_for_pl_and_bs_accounts():
+			if (
+				round_off_gle.company == dimension.company
+				and (
+					(report_type == "Profit and Loss" and dimension.mandatory_for_pl)
+					or (report_type == "Balance Sheet" and dimension.mandatory_for_bs)
+				)
+				and dimension.default_dimension
+			):
+				round_off_gle[dimension.fieldname] = dimension.default_dimension
 
 
 def get_round_off_account_and_cost_center(company, voucher_type, voucher_no, use_company_default=False):

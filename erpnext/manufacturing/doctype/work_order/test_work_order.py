@@ -3186,6 +3186,53 @@ class TestWorkOrder(FrappeTestCase):
 
 		allow_overproduction("overproduction_percentage_for_work_order", 0)
 
+	def test_reserved_qty_for_pp_with_extra_material_transfer(self):
+		from erpnext.stock.doctype.stock_entry.test_stock_entry import (
+			make_stock_entry as make_stock_entry_test_record,
+		)
+
+		rm_item_code = make_item(
+			"_Test Reserved Qty PP Item",
+			{
+				"is_stock_item": 1,
+			},
+		).name
+
+		fg_item_code = make_item(
+			"_Test Reserved Qty PP FG Item",
+			{
+				"is_stock_item": 1,
+			},
+		).name
+
+		make_stock_entry_test_record(
+			item_code=rm_item_code, target="_Test Warehouse - _TC", qty=10, basic_rate=100
+		)
+
+		make_bom(
+			item=fg_item_code,
+			raw_materials=[rm_item_code],
+		)
+
+		wo_order = make_wo_order_test_record(
+			item=fg_item_code,
+			qty=1,
+			source_warehouse="_Test Warehouse - _TC",
+			skip_transfer=0,
+			target_warehouse="_Test Warehouse - _TC",
+		)
+
+		bin1_at_completion = get_bin(rm_item_code, "_Test Warehouse - _TC")
+		self.assertEqual(bin1_at_completion.reserved_qty_for_production, 1)
+
+		s = frappe.get_doc(make_stock_entry(wo_order.name, "Material Transfer for Manufacture", 1))
+		s.items[0].qty += 2  # extra material transfer
+		s.submit()
+
+		bin1_at_completion = get_bin(rm_item_code, "_Test Warehouse - _TC")
+
+		self.assertEqual(bin1_at_completion.reserved_qty_for_production, 0)
+
 
 def make_stock_in_entries_and_get_batches(rm_item, source_warehouse, wip_warehouse):
 	from erpnext.stock.doctype.stock_entry.test_stock_entry import (

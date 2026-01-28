@@ -138,7 +138,6 @@ erpnext.utils.BarcodeScanner = class BarcodeScanner {
 
 			frappe.run_serially([
 				() => this.set_selector_trigger_flag(data),
-				() => this.set_barcode_uom(row, uom),
 				() => this.set_serial_no(row, serial_no),
 				() => this.set_batch_no(row, batch_no),
 				() => this.set_barcode(row, barcode),
@@ -148,6 +147,7 @@ erpnext.utils.BarcodeScanner = class BarcodeScanner {
 						this.show_scan_message(row.idx, !is_new_row, qty);
 					}),
 				() => this.clean_up(),
+				() => this.set_barcode_uom(row, uom),
 				() => this.revert_selector_flag(),
 				() => resolve(row),
 			]);
@@ -404,6 +404,8 @@ erpnext.utils.BarcodeScanner = class BarcodeScanner {
 	async set_barcode(row, barcode) {
 		if (barcode && frappe.meta.has_field(row.doctype, this.barcode_field)) {
 			await frappe.model.set_value(row.doctype, row.name, this.barcode_field, barcode);
+		} else {
+			row.barcode = barcode;
 		}
 	}
 

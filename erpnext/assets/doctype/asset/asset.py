@@ -669,7 +669,10 @@ class Asset(AccountsController):
 	def get_status(self):
 		"""Returns status based on whether it is draft, submitted, scrapped or depreciated"""
 		if self.docstatus == 0:
-			status = "Draft"
+			if self.is_composite_asset:
+				status = "Work In Progress"
+			else:
+				status = "Draft"
 		elif self.docstatus == 1:
 			status = "Submitted"
 

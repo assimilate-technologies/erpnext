@@ -76,6 +76,7 @@ class AssetCapitalization(StockController):
 		naming_series: DF.Literal["ACC-ASC-.YYYY.-"]
 		posting_date: DF.Date
 		posting_time: DF.Time
+		project: DF.Link | None
 		service_items: DF.Table[AssetCapitalizationServiceItem]
 		service_items_total: DF.Currency
 		set_posting_time: DF.Check
@@ -610,14 +611,21 @@ class AssetCapitalization(StockController):
 
 		asset_doc = frappe.get_doc("Asset", self.target_asset)
 		if self.docstatus == 2:
-			asset_doc.gross_purchase_amount -= total_target_asset_value
-			asset_doc.purchase_amount -= total_target_asset_value
+			gross_purchase_amount = asset_doc.gross_purchase_amount - total_target_asset_value
+			purchase_amount = asset_doc.purchase_amount - total_target_asset_value
+			total_asset_cost = asset_doc.total_asset_cost - total_target_asset_value
 		else:
-			asset_doc.gross_purchase_amount += total_target_asset_value
-			asset_doc.purchase_amount += total_target_asset_value
-		asset_doc.set_status("Work In Progress")
-		asset_doc.flags.ignore_validate = True
-		asset_doc.save()
+			gross_purchase_amount = asset_doc.gross_purchase_amount + total_target_asset_value
+			purchase_amount = asset_doc.purchase_amount + total_target_asset_value
+			total_asset_cost = asset_doc.total_asset_cost + total_target_asset_value
+
+		asset_doc.db_set(
+			{
+				"gross_purchase_amount": gross_purchase_amount,
+				"purchase_amount": purchase_amount,
+				"total_asset_cost": total_asset_cost,
+			}
+		)
 
 		frappe.msgprint(
 			_("Asset {0} has been updated. Please set the depreciation details if any and submit it.").format(
