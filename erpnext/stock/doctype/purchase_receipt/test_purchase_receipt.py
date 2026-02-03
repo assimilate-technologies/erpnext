@@ -4716,6 +4716,84 @@ class TestPurchaseReceipt(FrappeTestCase):
 		return_pr = make_return_doc("Purchase Receipt", pr.name)
 		self.assertRaises(frappe.ValidationError, return_pr.submit)
 
+	def test_internal_purchase_receipt_incoming_rate_with_lcv(self):
+		"""
+		To test inter branch transaction incoming rate calculation with lcv after item reposting
+		"""
+		from erpnext.stock.doctype.delivery_note.delivery_note import make_inter_company_purchase_receipt
+		from erpnext.stock.doctype.delivery_note.test_delivery_note import create_delivery_note
+
+		prepare_data_for_internal_transfer()
+		customer = "_Test Internal Customer 2"
+		company = "_Test Company with perpetual inventory"
+		item_doc = create_item("_Test Internal PR LCV Item")
+		lcv_expense_account = "Expenses Included In Valuation - TCP1"
+
+		from_warehouse = create_warehouse("_Test Internal From Warehouse LCV", company=company)
+		to_warehouse = create_warehouse("_Test Internal To Warehouse LCV", company=company)
+
+		# inward qty for internal transactions
+		make_purchase_receipt(
+			item_code=item_doc.item_code,
+			qty=5,
+			rate=100,
+			company="_Test Company with perpetual inventory",
+			warehouse=from_warehouse,
+		)
+
+		idn = create_delivery_note(
+			item_code=item_doc.name,
+			company=company,
+			customer=customer,
+			cost_center="Main - TCP1",
+			expense_account="Cost of Goods Sold - TCP1",
+			qty=5,
+			rate=100,
+			warehouse=from_warehouse,
+			target_warehouse=to_warehouse,
+		)
+		self.assertEqual(idn.items[0].rate, 100)
+
+		ipr = make_inter_company_purchase_receipt(idn.name)
+		ipr.items[0].warehouse = from_warehouse
+		self.assertEqual(ipr.items[0].rate, 100)
+		ipr.submit()
+
+		self.create_lcv(ipr.doctype, ipr.name, company, lcv_expense_account, charges=100)
+		ipr.reload()
+
+		self.assertEqual(ipr.items[0].landed_cost_voucher_amount, 100)
+		self.assertEqual(ipr.items[0].valuation_rate, 120)
+
+		# repost the receipt and check the stock ledger values
+		repost_doc = frappe.new_doc("Repost Item Valuation")
+		repost_doc.update(
+			{
+				"based_on": "Transaction",
+				"voucher_type": ipr.doctype,
+				"voucher_no": ipr.name,
+				"posting_date": ipr.posting_date,
+				"posting_time": ipr.posting_time,
+				"company": ipr.company,
+				"allow_negative_stock": 1,
+				"via_landed_cost_voucher": 0,
+				"allow_zero_rate": 0,
+			}
+		)
+		repost_doc.save()
+		repost_doc.submit()
+
+		stk_ledger = frappe.db.get_value(
+			"Stock Ledger Entry",
+			{"voucher_type": "Purchase Receipt", "voucher_no": ipr.name, "warehouse": from_warehouse},
+			["incoming_rate", "stock_value_difference"],
+			as_dict=True,
+		)
+
+		# check the incoming rate and stock value change
+		self.assertEqual(stk_ledger.incoming_rate, 120)
+		self.assertEqual(stk_ledger.stock_value_difference, 600)
+
 
 def prepare_data_for_internal_transfer():
 	from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_internal_supplier
