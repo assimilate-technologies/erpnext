@@ -83,7 +83,7 @@ def validate_filters(filters):
 
 def get_data(filters):
 	accounts = frappe.db.sql(
-		"""select name, account_number, parent_account, account_name, root_type, report_type, lft, rgt
+		"""select name, account_number, parent_account, account_name, root_type, report_type, is_group, lft, rgt
 
 		from `tabAccount` where company=%s order by lft""",
 		filters.company,
@@ -345,7 +345,7 @@ def calculate_values(accounts, gl_entries_by_account, opening_balances, show_net
 			prepare_opening_closing(d)
 
 
-def calculate_total_row(accounts, company_currency):
+def calculate_total_row(data, company_currency, show_group_accounts=True):
 	total_row = {
 		"account": "'" + _("Total") + "'",
 		"account_name": "'" + _("Total") + "'",
@@ -362,10 +362,16 @@ def calculate_total_row(accounts, company_currency):
 		"currency": company_currency,
 	}
 
-	for d in accounts:
-		if not d.parent_account:
-			for field in value_fields:
-				total_row[field] += d[field]
+	def sum_value_fields(row):
+		for field in value_fields:
+			total_row[field] += row[field]
+
+	for d in data:
+		if not show_group_accounts:
+			sum_value_fields(d)
+
+		elif show_group_accounts and not d.get("parent_account"):
+			sum_value_fields(d)
 
 	return total_row
 
@@ -393,6 +399,7 @@ def prepare_data(accounts, filters, parent_children_map, company_currency):
 			"from_date": filters.from_date,
 			"to_date": filters.to_date,
 			"currency": company_currency,
+			"is_group_account": d.is_group,
 			"account_name": (
 				f"{d.account_number} - {d.account_name}" if d.account_number else d.account_name
 			),
@@ -408,7 +415,13 @@ def prepare_data(accounts, filters, parent_children_map, company_currency):
 		row["has_value"] = has_value
 		data.append(row)
 
-	total_row = calculate_total_row(accounts, company_currency)
+	if not filters.get("show_group_accounts"):
+		data = hide_group_accounts(data)
+
+	total_row = calculate_total_row(
+		data, company_currency, show_group_accounts=filters.get("show_group_accounts")
+	)
+
 	data.extend([{}, total_row])
 
 	return data
@@ -488,3 +501,12 @@ def prepare_opening_closing(row):
 			row[valid_col] = 0.0
 		else:
 			row[reverse_col] = 0.0
+
+
+def hide_group_accounts(data):
+	non_group_accounts_data = []
+	for d in data:
+		if not d.get("is_group_account"):
+			d.update(indent=0)
+			non_group_accounts_data.append(d)
+	return non_group_accounts_data

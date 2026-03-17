@@ -75,7 +75,6 @@ erpnext.patches.v12_0.make_item_manufacturer
 erpnext.patches.v12_0.move_item_tax_to_item_tax_template
 erpnext.patches.v11_1.set_variant_based_on
 erpnext.patches.v11_1.woocommerce_set_creation_user
-erpnext.patches.v11_1.rename_depends_on_lwp
 execute:frappe.delete_doc("Report", "Inactive Items")
 erpnext.patches.v11_1.delete_scheduling_tool
 erpnext.patches.v12_0.rename_tolerance_fields
@@ -406,6 +405,7 @@ erpnext.patches.v15_0.update_payment_schedule_fields_in_invoices
 erpnext.patches.v15_0.rename_group_by_to_categorize_by
 execute:frappe.db.set_single_value("Accounts Settings", "receivable_payable_fetch_method", "Buffered Cursor")
 erpnext.patches.v14_0.set_update_price_list_based_on
+erpnext.patches.v15_0.add_bank_transaction_as_journal_entry_reference
 erpnext.patches.v15_0.set_cancelled_status_to_cancelled_pos_invoice
 erpnext.patches.v15_0.rename_group_by_to_categorize_by_in_custom_reports
 erpnext.patches.v14_0.update_full_name_in_contract
@@ -428,3 +428,7 @@ execute:frappe.db.set_single_value("Accounts Settings", "show_party_balance", 1)
 execute:frappe.db.set_single_value("Accounts Settings", "show_account_balance", 1)
 erpnext.patches.v16_0.update_currency_exchange_settings_for_frankfurter #2025-12-11
 erpnext.patches.v15_0.create_accounting_dimensions_in_advance_taxes_and_charges
+erpnext.patches.v16_0.set_ordered_qty_in_quotation_item
+erpnext.patches.v15_0.replace_http_with_https_in_sales_partner
+erpnext.patches.v16_0.add_portal_redirects
+erpnext.patches.v16_0.update_order_qty_and_requested_qty_based_on_mr_and_po

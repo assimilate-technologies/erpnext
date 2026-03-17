@@ -8,7 +8,7 @@ from frappe.utils import flt
 
 from erpnext.buying.utils import check_on_hold_or_closed_status
 from erpnext.controllers.subcontracting_controller import SubcontractingController
-from erpnext.stock.stock_balance import update_bin_qty
+from erpnext.stock.stock_balance import get_ordered_qty, update_bin_qty
 from erpnext.stock.utils import get_bin
 
 
@@ -81,23 +81,6 @@ class SubcontractingOrder(SubcontractingController):
 		transaction_date: DF.Date
 	# end: auto-generated types
 
-	def __init__(self, *args, **kwargs):
-		super().__init__(*args, **kwargs)
-
-		self.status_updater = [
-			{
-				"source_dt": "Subcontracting Order Item",
-				"target_dt": "Material Request Item",
-				"join_field": "material_request_item",
-				"target_field": "ordered_qty",
-				"target_parent_dt": "Material Request",
-				"target_parent_field": "per_ordered",
-				"target_ref_field": "stock_qty",
-				"source_field": "qty",
-				"percent_join_field": "material_request",
-			}
-		]
-
 	def onload(self):
 		self.set_onload(
 			"over_transfer_allowance",
@@ -117,12 +100,10 @@ class SubcontractingOrder(SubcontractingController):
 		self.reset_default_field_value("set_warehouse", "items", "warehouse")
 
 	def on_submit(self):
-		self.update_prevdoc_status()
 		self.update_status()
 		self.update_subcontracted_quantity_in_po()
 
 	def on_cancel(self):
-		self.update_prevdoc_status()
 		self.update_status()
 		self.update_subcontracted_quantity_in_po(cancel=True)
 
@@ -211,30 +192,7 @@ class SubcontractingOrder(SubcontractingController):
 			):
 				item_wh_list.append([item.item_code, item.warehouse])
 		for item_code, warehouse in item_wh_list:
-			update_bin_qty(item_code, warehouse, {"ordered_qty": self.get_ordered_qty(item_code, warehouse)})
-
-	@staticmethod
-	def get_ordered_qty(item_code, warehouse):
-		table = frappe.qb.DocType("Subcontracting Order")
-		child = frappe.qb.DocType("Subcontracting Order Item")
-
-		query = (
-			frappe.qb.from_(table)
-			.inner_join(child)
-			.on(table.name == child.parent)
-			.select((child.qty - child.received_qty) * child.conversion_factor)
-			.where(
-				(table.docstatus == 1)
-				& (child.item_code == item_code)
-				& (child.warehouse == warehouse)
-				& (child.qty > child.received_qty)
-				& (table.status != "Completed")
-			)
-		)
-
-		query = query.run()
-
-		return flt(query[0][0]) if query else 0
+			update_bin_qty(item_code, warehouse, {"ordered_qty": get_ordered_qty(item_code, warehouse)})
 
 	def update_reserved_qty_for_subcontracting(self, sco_item_rows=None):
 		for item in self.supplied_items:

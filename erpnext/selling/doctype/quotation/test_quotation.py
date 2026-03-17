@@ -1,17 +1,153 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
+import json
+
 import frappe
 from frappe.tests.utils import FrappeTestCase, change_settings
 from frappe.utils import add_days, add_months, flt, getdate, nowdate
 
-from erpnext.controllers.accounts_controller import InvalidQtyError
+from erpnext.controllers.accounts_controller import InvalidQtyError, update_child_qty_rate
+from erpnext.selling.doctype.quotation.quotation import make_sales_order
 from erpnext.setup.utils import get_exchange_rate
 
 test_dependencies = ["Product Bundle"]
 
 
 class TestQuotation(FrappeTestCase):
+	def test_update_child_quotation_add_item(self):
+		from erpnext.stock.doctype.item.test_item import make_item
+
+		item_1 = make_item("_Test Item")
+		item_2 = make_item("_Test Item 1")
+
+		item_list = [
+			{"item_code": item_1.item_code, "warehouse": "", "qty": 10, "rate": 300},
+			{"item_code": item_2.item_code, "warehouse": "", "qty": 5, "rate": 400},
+		]
+
+		qo = make_quotation(item_list=item_list)
+		first_item = qo.get("items")[0]
+		second_item = qo.get("items")[1]
+		trans_item = json.dumps(
+			[
+				{
+					"item_code": first_item.item_code,
+					"rate": first_item.rate,
+					"qty": 11,
+					"docname": first_item.name,
+				},
+				{
+					"item_code": second_item.item_code,
+					"rate": second_item.rate,
+					"qty": second_item.qty,
+					"docname": second_item.name,
+				},
+				{"item_code": "_Test Item 2", "rate": 100, "qty": 7},
+			]
+		)
+
+		update_child_qty_rate("Quotation", trans_item, qo.name)
+		qo.reload()
+		self.assertEqual(qo.get("items")[0].qty, 11)
+		self.assertEqual(qo.get("items")[-1].rate, 100)
+
+	def test_update_child_rate_change(self):
+		from erpnext.stock.doctype.item.test_item import make_item
+
+		item_1 = make_item("_Test Item")
+		item_2 = make_item("_Test Item 1")
+
+		item_list = [
+			{"item_code": item_1.item_code, "warehouse": "_Test Warehouse - _TC", "qty": 10, "rate": 300},
+			{"item_code": item_2.item_code, "warehouse": "_Test Warehouse - _TC", "qty": 5, "rate": 400},
+		]
+
+		qo = make_quotation(item_list=item_list)
+		so = make_sales_order(qo.name, args={"filtered_children": [qo.items[0].name]})
+		so.delivery_date = nowdate()
+		so.submit()
+		qo.reload()
+		trans_item = json.dumps(
+			[
+				{
+					"item_code": qo.items[0].item_code,
+					"rate": 5000,
+					"qty": qo.items[0].qty,
+					"docname": qo.items[0].name,
+				},
+				{
+					"item_code": qo.items[1].item_code,
+					"rate": qo.items[1].rate,
+					"qty": qo.items[1].qty,
+					"docname": qo.items[1].name,
+				},
+			]
+		)
+		self.assertRaises(frappe.ValidationError, update_child_qty_rate, "Quotation", trans_item, qo.name)
+		trans_item = json.dumps(
+			[
+				{
+					"item_code": qo.items[0].item_code,
+					"rate": qo.items[0].rate,
+					"qty": qo.items[0].qty,
+					"docname": qo.items[0].name,
+				},
+				{
+					"item_code": qo.items[1].item_code,
+					"rate": 50,
+					"qty": qo.items[1].qty,
+					"docname": qo.items[1].name,
+				},
+			]
+		)
+		update_child_qty_rate("Quotation", trans_item, qo.name)
+		qo.reload()
+		self.assertEqual(qo.items[1].rate, 50)
+
+	def test_update_child_removing_item(self):
+		qo = make_quotation(qty=10)
+		sales_order = make_sales_order(qo.name)
+		sales_order.delivery_date = nowdate()
+
+		trans_item = json.dumps(
+			[
+				{
+					"item_code": qo.items[0].item_code,
+					"rate": qo.items[0].rate,
+					"qty": qo.items[0].qty,
+					"docname": qo.items[0].name,
+				},
+				{"item_code": "_Test Item 2", "rate": 100, "qty": 7},
+			]
+		)
+
+		update_child_qty_rate("Quotation", trans_item, qo.name)
+		sales_order.submit()
+		qo.reload()
+		self.assertEqual(qo.status, "Partially Ordered")
+
+		trans_item = json.dumps([{"item_code": "_Test Item 2", "rate": 100, "qty": 7}])
+
+		# check if items having a sales order can be removed
+		self.assertRaises(frappe.ValidationError, update_child_qty_rate, "Quotation", trans_item, qo.name)
+
+		trans_item = json.dumps(
+			[
+				{
+					"item_code": qo.items[0].item_code,
+					"rate": qo.items[0].rate,
+					"qty": qo.items[0].qty,
+					"docname": qo.items[0].name,
+				}
+			]
+		)
+
+		# remove item with no sales order
+		update_child_qty_rate("Quotation", trans_item, qo.name)
+		qo.reload()
+		self.assertEqual(len(qo.get("items")), 1)
+
 	def test_quotation_qty(self):
 		qo = make_quotation(qty=0, do_not_save=True)
 		with self.assertRaises(InvalidQtyError):
@@ -828,7 +964,7 @@ class TestQuotation(FrappeTestCase):
 		# item code same but description different
 		make_item("_Test Item 2", {"is_stock_item": 1})
 
-		quotation = make_quotation(qty=1, rate=100, do_not_submit=1)
+		quotation = make_quotation(qty=10, rate=100, do_not_submit=1)
 
 		# duplicate items
 		for qty in [1, 1, 2, 3]:
@@ -842,7 +978,7 @@ class TestQuotation(FrappeTestCase):
 		sales_order.delivery_date = nowdate()
 
 		self.assertEqual(len(sales_order.items), 6)
-		self.assertEqual(sales_order.items[0].qty, 1)
+		self.assertEqual(sales_order.items[0].qty, 10)
 		self.assertEqual(sales_order.items[-1].qty, 5)
 
 		# Row 1: 10, Row 4: 1, Row 5: 1
@@ -884,6 +1020,43 @@ class TestQuotation(FrappeTestCase):
 			expected_rate,
 			f"Expected conversion rate {expected_rate}, got {quotation.conversion_rate}",
 		)
+
+	def test_over_order_limit(self):
+		from erpnext.selling.doctype.quotation.quotation import make_sales_order
+
+		quotation = make_quotation(qty=5)
+		so1 = make_sales_order(quotation.name)
+		so2 = make_sales_order(quotation.name)
+		so1.delivery_date = nowdate()
+		so2.delivery_date = nowdate()
+
+		so1.submit()
+		self.assertRaises(frappe.ValidationError, so2.submit)
+
+	def test_quotation_status(self):
+		quotation = make_quotation()
+
+		so1 = make_sales_order(quotation.name)
+		so1.delivery_date = nowdate()
+		so1.submit()
+		quotation.reload()
+		self.assertEqual(quotation.status, "Ordered")
+		so1.cancel()
+
+		quotation.reload()
+		self.assertEqual(quotation.status, "Open")
+
+		so2 = make_sales_order(quotation.name)
+		so2.delivery_date = nowdate()
+		so2.items[0].qty = 1
+		so2.submit()
+		quotation.reload()
+		self.assertEqual(quotation.status, "Partially Ordered")
+
+		so2.cancel()
+
+		quotation.reload()
+		self.assertEqual(quotation.status, "Open")
 
 
 test_records = frappe.get_test_records("Quotation")

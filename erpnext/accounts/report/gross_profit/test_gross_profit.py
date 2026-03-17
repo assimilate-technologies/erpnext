@@ -439,6 +439,7 @@ class TestGrossProfit(FrappeTestCase):
 			qty=-1, rate=100, posting_date=nowdate(), do_not_save=True, do_not_submit=True
 		)
 		sinv.is_return = 1
+		sinv.items[0].allow_zero_valuation_rate = 1
 		sinv = sinv.save().submit()
 
 		filters = frappe._dict(
@@ -465,7 +466,7 @@ class TestGrossProfit(FrappeTestCase):
 			"selling_amount": -100.0,
 			"buying_amount": 0.0,
 			"gross_profit": -100.0,
-			"gross_profit_%": 100.0,
+			"gross_profit_%": -100.0,
 		}
 		gp_entry = [x for x in data if x.parent_invoice == sinv.name]
 		self.assertDictContainsSubset(expected_entry, gp_entry[0])
@@ -642,21 +643,24 @@ class TestGrossProfit(FrappeTestCase):
 	def test_profit_for_later_period_return(self):
 		month_start_date, month_end_date = get_first_day(nowdate()), get_last_day(nowdate())
 
+		sales_inv_date = month_start_date
+		return_inv_date = add_days(month_end_date, 1)
+
 		# create sales invoice on month start date
 		sinv = self.create_sales_invoice(qty=1, rate=100, do_not_save=True, do_not_submit=True)
 		sinv.set_posting_time = 1
-		sinv.posting_date = month_start_date
+		sinv.posting_date = sales_inv_date
 		sinv.save().submit()
 
 		# create credit note on next month start date
 		cr_note = make_sales_return(sinv.name)
 		cr_note.set_posting_time = 1
-		cr_note.posting_date = add_days(month_end_date, 1)
+		cr_note.posting_date = return_inv_date
 		cr_note.save().submit()
 
 		# apply filters for invoiced period
 		filters = frappe._dict(
-			company=self.company, from_date=month_start_date, to_date=month_end_date, group_by="Invoice"
+			company=self.company, from_date=month_start_date, to_date=month_start_date, group_by="Invoice"
 		)
 
 		_, data = execute(filters=filters)
@@ -668,7 +672,7 @@ class TestGrossProfit(FrappeTestCase):
 		self.assertEqual(total.get("gross_profit_%"), 100.0)
 
 		# extend filters upto returned period
-		filters.update(to_date=add_days(month_end_date, 1))
+		filters.update({"to_date": return_inv_date})
 
 		_, data = execute(filters=filters)
 		total = data[-1]
@@ -677,3 +681,63 @@ class TestGrossProfit(FrappeTestCase):
 		self.assertEqual(total.buying_amount, 0.0)
 		self.assertEqual(total.gross_profit, 0.0)
 		self.assertEqual(total.get("gross_profit_%"), 0.0)
+
+		# apply filters only on returned period
+		filters.update({"from_date": return_inv_date, "to_date": return_inv_date})
+		_, data = execute(filters=filters)
+		total = data[-1]
+
+		self.assertEqual(total.selling_amount, -100.0)
+		self.assertEqual(total.buying_amount, 0.0)
+		self.assertEqual(total.gross_profit, -100.0)
+		self.assertEqual(total.get("gross_profit_%"), -100.0)
+
+	def test_sales_person_wise_gross_profit(self):
+		sales_person = make_sales_person("_Test Sales Person")
+
+		posting_date = get_first_day(nowdate())
+		qty = 10
+		rate = 100
+
+		sinv = self.create_sales_invoice(qty=qty, rate=rate, do_not_save=True, do_not_submit=True)
+		sinv.set_posting_time = 1
+		sinv.posting_date = posting_date
+		sinv.append(
+			"sales_team",
+			{
+				"sales_person": sales_person.name,
+				"allocated_percentage": 100,
+				"allocated_amount": 1000.0,
+				"commission_rate": 5,
+				"incentives": 5,
+			},
+		)
+		sinv.save().submit()
+
+		filters = frappe._dict(
+			company=self.company, from_date=posting_date, to_date=posting_date, group_by="Sales Person"
+		)
+
+		_, data = execute(filters=filters)
+		total = data[-1]
+
+		self.assertEqual(total[5], 1000.0)
+		self.assertEqual(total[6], 0.0)
+		self.assertEqual(total[7], 1000.0)
+		self.assertEqual(total[8], 100.0)
+
+
+def make_sales_person(sales_person_name="_Test Sales Person"):
+	if not frappe.db.exists("Sales Person", {"sales_person_name": sales_person_name}):
+		sales_person_doc = frappe.get_doc(
+			{
+				"doctype": "Sales Person",
+				"is_group": 0,
+				"parent_sales_person": "Sales Team",
+				"sales_person_name": sales_person_name,
+			}
+		).insert(ignore_permissions=True)
+	else:
+		sales_person_doc = frappe.get_doc("Sales Person", {"sales_person_name": sales_person_name})
+
+	return sales_person_doc

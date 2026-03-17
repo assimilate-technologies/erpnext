@@ -81,7 +81,7 @@ class MaterialRequest(BuyingController):
 			{
 				"source_dt": "Material Request Item",
 				"target_dt": "Sales Order Item",
-				"target_field": "ordered_qty",
+				"target_field": "requested_qty",
 				"target_parent_dt": "Sales Order",
 				"target_parent_field": "",
 				"join_field": "sales_order_item",
@@ -248,6 +248,8 @@ class MaterialRequest(BuyingController):
 	def on_cancel(self):
 		self.update_requested_qty_in_production_plan()
 		self.update_requested_qty()
+		if self.material_request_type == "Purchase":
+			self.update_prevdoc_status()
 
 	def get_mr_items_ordered_qty(self, mr_items):
 		mr_items_ordered_qty = {}
@@ -298,7 +300,8 @@ class MaterialRequest(BuyingController):
 
 					if mr_qty_allowance:
 						allowed_qty = flt(
-							(d.qty + (d.qty * (mr_qty_allowance / 100))), d.precision("ordered_qty")
+							(d.stock_qty + (d.stock_qty * (mr_qty_allowance / 100))),
+							d.precision("ordered_qty"),
 						)
 
 						if d.ordered_qty and flt(d.ordered_qty, precision) > flt(allowed_qty, precision):
@@ -706,6 +709,9 @@ def make_stock_entry(source_name, target_doc=None):
 		target.purpose = source.material_request_type
 		target.from_warehouse = source.set_from_warehouse
 		target.to_warehouse = source.set_warehouse
+		if source.material_request_type == "Material Issue":
+			target.from_warehouse = source.set_warehouse
+			target.to_warehouse = None
 
 		if source.job_card:
 			target.purpose = "Material Transfer for Manufacture"

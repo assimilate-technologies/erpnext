@@ -57,6 +57,29 @@ class TestSalesOrder(AccountsTestMixin, FrappeTestCase):
 	def tearDown(self):
 		frappe.set_user("Administrator")
 
+	def test_sales_order_skip_delivery_note(self):
+		so = make_sales_order(do_not_submit=True)
+		so.order_type = "Maintenance"
+		so.skip_delivery_note = 1
+		so.append(
+			"items",
+			{
+				"item_code": "_Test Item 2",
+				"qty": 2,
+				"rate": 100,
+			},
+		)
+		so.save()
+		so.submit()
+
+		so.reload()
+		si = make_sales_invoice(so.name)
+		si.insert()
+		si.submit()
+		so.reload()
+		self.assertEqual(so.status, "Completed")
+
+	@change_settings("Selling Settings", {"allow_negative_rates_for_items": 1})
 	def test_sales_order_with_negative_rate(self):
 		"""
 		Test if negative rate is allowed in Sales Order via doc submission and update items
@@ -179,7 +202,11 @@ class TestSalesOrder(AccountsTestMixin, FrappeTestCase):
 
 	@change_settings(
 		"Accounts Settings",
-		{"add_taxes_from_item_tax_template": 0, "add_taxes_from_taxes_and_charges_template": 1},
+		{
+			"add_taxes_from_item_tax_template": 0,
+			"add_taxes_from_taxes_and_charges_template": 1,
+			"automatically_fetch_payment_terms": 1,
+		},
 	)
 	def test_make_sales_invoice_with_terms(self):
 		so = make_sales_order(do_not_submit=True)
@@ -208,6 +235,34 @@ class TestSalesOrder(AccountsTestMixin, FrappeTestCase):
 
 		si1 = make_sales_invoice(so.name)
 		self.assertEqual(len(si1.get("items")), 0)
+
+	@change_settings("Accounts Settings", {"automatically_fetch_payment_terms": 1})  # Enable auto fetch
+	def test_auto_fetch_terms_enable(self):
+		so = make_sales_order(do_not_submit=True)
+
+		so.payment_terms_template = "_Test Payment Term Template"
+		so.save()
+		so.submit()
+
+		si = make_sales_invoice(so.name)
+		# Check if payment terms are copied from sales order to sales invoice
+		self.assertTrue(si.payment_terms_template)
+		si.insert()
+		si.submit()
+
+	@change_settings("Accounts Settings", {"automatically_fetch_payment_terms": 0})  # Disable auto fetch
+	def test_auto_fetch_terms_disable(self):
+		so = make_sales_order(do_not_submit=True)
+
+		so.payment_terms_template = "_Test Payment Term Template"
+		so.save()
+		so.submit()
+
+		si = make_sales_invoice(so.name)
+		# Check if payment terms are not copied from sales order to sales invoice
+		self.assertFalse(si.payment_terms_template)
+		si.insert()
+		si.submit()
 
 	def test_update_qty(self):
 		so = make_sales_order()
@@ -2416,6 +2471,49 @@ class TestSalesOrder(AccountsTestMixin, FrappeTestCase):
 
 		si2 = make_sales_invoice(so.name)
 		self.assertEqual(si2.items[0].qty, 20)
+
+	@change_settings("Selling Settings", {"validate_selling_price": 1})
+	def test_selling_price_validation_for_manufactured_item(self):
+		"""
+		Unit test to check the selling price validation for manufactured item, without last purchae rate in Item master.
+		"""
+
+		from erpnext.manufacturing.doctype.production_plan.test_production_plan import make_bom
+		from erpnext.stock.doctype.warehouse.test_warehouse import create_warehouse
+
+		# create a FG Item and RM Item
+		rm_item = make_item(
+			"_Test RM Item for SO selling validation",
+			{"is_stock_item": 1, "valuation_rate": 100, "stock_uom": "Nos"},
+		).name
+		rm_warehouse = create_warehouse("_Test RM SPV Warehouse")
+		fg_item = make_item("_Test FG Item for SO selling validation", {"is_stock_item": 1}).name
+		fg_warehouse = create_warehouse("_Test FG SPV Warehouse")
+
+		# create BOM and inward entry for RM Item
+		bom_no = make_bom(item=fg_item, raw_materials=[rm_item]).name
+		make_stock_entry(item_code=rm_item, target=rm_warehouse, qty=10, rate=100)
+
+		# create a manufacture entry, so system won't update the last purchase rate in Item master.
+		se = make_stock_entry(item_code=fg_item, qty=10, purpose="Manufacture", do_not_save=True)
+
+		se.from_bom = 1
+		se.use_multi_level_bom = 1
+		se.bom_no = bom_no
+		se.fg_completed_qty = 1
+		se.from_warehouse = rm_warehouse
+		se.to_warehouse = fg_warehouse
+
+		se.get_items()
+		se.save()
+		se.submit()
+
+		# check valuation of FG Item
+		self.assertEqual(se.items[1].valuation_rate, 100)
+
+		# create a SO for FG Item with selling rate than valuation rate.
+		so = make_sales_order(item_code=fg_item, qty=10, rate=50, warehouse=fg_warehouse, do_not_save=1)
+		self.assertRaises(frappe.ValidationError, so.save)
 
 
 def compare_payment_schedules(doc, doc1, doc2):

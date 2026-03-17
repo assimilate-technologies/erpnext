@@ -854,9 +854,6 @@ class SalesInvoice(SellingController):
 			if selling_price_list:
 				self.set("selling_price_list", selling_price_list)
 
-			if not for_validate:
-				self.update_stock = cint(pos.get("update_stock"))
-
 			# set pos values in items
 			for item in self.get("items"):
 				if item.get("item_code"):
@@ -1097,7 +1094,9 @@ class SalesInvoice(SellingController):
 			d.projected_qty = bin and flt(bin[0]["projected_qty"]) or 0
 
 	def update_packing_list(self):
-		if cint(self.update_stock) == 1:
+		if self.doctype == "POS Invoice" or (
+			self.doctype == "Sales Invoice" and cint(self.update_stock) == 1
+		):
 			from erpnext.stock.doctype.packed_item.packed_item import make_packing_list
 
 			make_packing_list(self)
@@ -1200,6 +1199,9 @@ class SalesInvoice(SellingController):
 				throw(_("Delivery Note {0} is not submitted").format(d.delivery_note))
 
 	def process_asset_depreciation(self):
+		if self.is_internal_transfer():
+			return
+
 		if (self.is_return and self.docstatus == 2) or (not self.is_return and self.docstatus == 1):
 			self.depreciate_asset_on_sale()
 		else:

@@ -47,6 +47,7 @@
   "disable_serial_no_and_batch_selector",
   "use_serial_batch_fields",
   "do_not_update_serial_batch_on_creation_of_auto_bundle",
+  "allow_negative_stock_for_batch",
   "serial_and_batch_bundle_section",
   "set_serial_and_batch_bundle_naming_based_on_naming_series",
   "section_break_gnhq",
@@ -454,7 +455,7 @@
   },
   {
    "default": "0",
-   "description": "If enabled, the item rate won't adjust to the valuation rate during internal transfers, but accounting will still use the valuation rate.",
+   "description": "If enabled, the item rate won't adjust to the valuation rate during internal transfers, but accounting will still use the valuation rate. This will allow the user to specify a different rate for printing or taxation purposes.",
    "fieldname": "allow_internal_transfer_at_arms_length_price",
    "fieldtype": "Check",
    "label": "Allow Internal Transfers at Arm's Length Price"
@@ -538,6 +539,13 @@
    "fieldname": "validate_material_transfer_warehouses",
    "fieldtype": "Check",
    "label": "Validate Material Transfer Warehouses"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, the system will allow negative stock entries for the batch. But, this may lead to incorrect valuation rates, so it is recommended to avoid using this option. The system will permit negative stock only when it is caused by backdated entries and will validate and block negative stock in all other cases.",
+   "fieldname": "allow_negative_stock_for_batch",
+   "fieldtype": "Check",
+   "label": "Allow Negative Stock for Batch"
   }
  ],
  "icon": "icon-cog",
@@ -545,7 +553,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-11-11 11:35:39.864923",
+ "modified": "2026-02-25 09:56:34.105949",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Stock Settings",

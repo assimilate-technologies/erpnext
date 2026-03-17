@@ -7,18 +7,16 @@ from frappe import _, msgprint, qb, scrub
 from frappe.contacts.doctype.address.address import get_company_address, get_default_address
 from frappe.core.doctype.user_permission.user_permission import get_permitted_documents
 from frappe.model.utils import get_fetch_values
-from frappe.query_builder.functions import Abs, Count, Date, Sum
+from frappe.query_builder.functions import Abs, Date, Sum
 from frappe.utils import (
 	add_days,
 	add_months,
-	add_years,
 	cint,
 	cstr,
 	date_diff,
 	flt,
 	formatdate,
 	get_last_day,
-	get_timestamp,
 	getdate,
 	nowdate,
 )
@@ -302,19 +300,9 @@ def complete_contact_details(party_details):
 	contact_details = frappe._dict()
 
 	if party_details.party_type == "Employee":
-		contact_details = frappe.db.get_value(
-			"Employee",
-			party_details.party,
-			[
-				"employee_name as contact_display",
-				"prefered_email as contact_email",
-				"cell_number as contact_mobile",
-				"designation as contact_designation",
-				"department as contact_department",
-			],
-			as_dict=True,
-		)
+		from erpnext.setup.doctype.employee.employee import _get_contact_details as get_employee_contact
 
+		contact_details = get_employee_contact(party_details.party)
 		contact_details.update({"contact_person": None, "contact_phone": None})
 	elif party_details.contact_person:
 		contact_details = frappe.db.get_value(
