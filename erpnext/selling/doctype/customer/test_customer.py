@@ -450,6 +450,7 @@ def make_customer(customer_name):
 		customer = frappe.new_doc("Customer")
 		customer.customer_name = customer_name
 		customer.customer_type = "Individual"
+		customer.customer_group = "Individual"
 		customer.insert()
 		return customer.name
 	else:

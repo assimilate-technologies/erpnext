@@ -440,7 +440,11 @@ erpnext.buying.PurchaseOrderController = class PurchaseOrderController extends (
 							__("Create")
 						);
 
-					if (flt(doc.per_billed) < 100 && doc.status != "Delivered") {
+					if (
+						frappe.model.can_create("Payment Entry") &&
+						flt(doc.per_billed) < 100 &&
+						doc.status != "Delivered"
+					) {
 						this.frm.add_custom_button(
 							__("Payment"),
 							() => this.make_payment_entry(),
@@ -448,7 +452,7 @@ erpnext.buying.PurchaseOrderController = class PurchaseOrderController extends (
 						);
 					}
 
-					if (flt(doc.per_billed) < 100) {
+					if (flt(doc.per_billed) < 100 && frappe.boot.user.in_create.includes("Payment Request")) {
 						this.frm.add_custom_button(
 							__("Payment Request"),
 							function () {
@@ -705,12 +709,20 @@ erpnext.buying.PurchaseOrderController = class PurchaseOrderController extends (
 	}
 
 	items_add(doc, cdt, cdn) {
-		var row = frappe.get_doc(cdt, cdn);
-		if (doc.schedule_date) {
-			row.schedule_date = doc.schedule_date;
-			refresh_field("schedule_date", cdn, "items");
+		const row = frappe.get_doc(cdt, cdn);
+		const field_copy = [];
+		if (doc.project) {
+			frappe.model.set_value(cdt, cdn, "project", doc.project);
 		} else {
-			this.frm.script_manager.copy_from_first_row("items", row, ["schedule_date"]);
+			field_copy.push("project");
+		}
+		if (doc.schedule_date) {
+			frappe.model.set_value(cdt, cdn, "schedule_date", doc.schedule_date);
+		} else {
+			field_copy.push("schedule_date");
+		}
+		if (field_copy.length) {
+			this.frm.script_manager.copy_from_first_row("items", row, field_copy);
 		}
 	}
 
@@ -769,10 +781,6 @@ erpnext.buying.PurchaseOrderController = class PurchaseOrderController extends (
 	items_on_form_rendered() {
 		set_schedule_date(this.frm);
 	}
-
-	schedule_date() {
-		set_schedule_date(this.frm);
-	}
 };
 
 // for backward compatibility: combine new and previous states
@@ -787,12 +795,6 @@ cur_frm.cscript.update_status = function (label, status) {
 			cur_frm.reload_doc();
 		},
 	});
-};
-
-cur_frm.fields_dict["items"].grid.get_field("project").get_query = function (doc, cdt, cdn) {
-	return {
-		filters: [["Project", "status", "not in", "Completed, Cancelled"]],
-	};
 };
 
 if (cur_frm.doc.is_old_subcontracting_flow) {

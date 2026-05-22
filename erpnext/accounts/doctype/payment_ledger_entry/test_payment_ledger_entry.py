@@ -80,6 +80,7 @@ class TestPaymentLedgerEntry(FrappeTestCase):
 			customer = frappe.new_doc("Customer")
 			customer.customer_name = name
 			customer.type = "Individual"
+			customer.customer_group = "Individual"
 			customer.save()
 			self.customer = customer.name
 

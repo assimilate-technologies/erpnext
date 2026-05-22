@@ -629,18 +629,21 @@ def create_parties():
 		customer.customer_name = "_Test Subscription Customer"
 		customer.default_currency = "USD"
 		customer.append("accounts", {"company": "_Test Company", "account": "_Test Receivable USD - _TC"})
+		customer.customer_group = "Individual"
 		customer.insert()
 
 	if not frappe.db.exists("Customer", "_Test Subscription Customer Multi Currency"):
 		customer = frappe.new_doc("Customer")
 		customer.customer_name = "Test Subscription Customer Multi Currency"
 		customer.default_currency = "USD"
+		customer.customer_group = "Individual"
 		customer.insert()
 
 	if not frappe.db.exists("Customer", "_Test Subscription Customer John Doe"):
 		customer = frappe.new_doc("Customer")
 		customer.customer_name = "_Test Subscription Customer John Doe"
 		customer.append("accounts", {"company": "_Test Company", "account": "_Test Receivable - _TC"})
+		customer.customer_group = "Individual"
 		customer.insert()
 
 

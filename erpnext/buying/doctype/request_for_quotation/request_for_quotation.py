@@ -283,7 +283,7 @@ class RequestforQuotation(BuyingController):
 			}
 		)
 		user.save(ignore_permissions=True)
-		update_password_link = user.reset_password()
+		update_password_link = user._reset_password()
 
 		return user, update_password_link
 
@@ -473,6 +473,11 @@ def make_supplier_quotation_from_rfq(source_name, target_doc=None, for_supplier=
 def create_supplier_quotation(doc):
 	if isinstance(doc, str):
 		doc = json.loads(doc)
+
+	if frappe.session.user not in frappe.get_all(
+		"Portal User", {"parent": doc.get("supplier")}, pluck="user"
+	):
+		frappe.throw(_("Not Permitted"), frappe.PermissionError)
 
 	try:
 		sq_doc = frappe.get_doc(

@@ -327,7 +327,7 @@ class BuyingController(SubcontractingController):
 				last_item_idx = d.idx
 
 		total_valuation_amount = sum(
-			flt(d.base_tax_amount_after_discount_amount)
+			flt(d.base_tax_amount_after_discount_amount) * (-1 if d.get("add_deduct_tax") == "Deduct" else 1)
 			for d in self.get("taxes")
 			if d.category in ["Valuation", "Valuation and Total"]
 		)

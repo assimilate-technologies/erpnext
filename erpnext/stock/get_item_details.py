@@ -10,7 +10,7 @@ from frappe.model import child_table_fields, default_fields
 from frappe.model.meta import get_field_precision
 from frappe.model.utils import get_fetch_values
 from frappe.query_builder.functions import IfNull, Sum
-from frappe.utils import add_days, add_months, cint, cstr, flt, getdate, parse_json
+from frappe.utils import add_days, add_months, cint, cstr, flt, get_link_to_form, getdate, parse_json
 
 from erpnext import get_company_currency
 from erpnext.accounts.doctype.pricing_rule.pricing_rule import (
@@ -671,6 +671,7 @@ def get_item_tax_info(company, tax_category, item_codes, item_rates=None, item_t
 	return out
 
 
+# nosemgrep: frappe-semgrep-rules.rules.security.missing-argument-type-hint
 @frappe.whitelist()
 def get_item_tax_template(args, item=None, out=None):
 	if isinstance(args, str):
@@ -687,16 +688,24 @@ def get_item_tax_template(args, item=None, out=None):
 		item_tax_template = _get_item_tax_template(args, item.taxes, out)
 
 	if not item_tax_template:
-		item_group = item.item_group
-		while item_group and not item_tax_template:
-			item_group_doc = frappe.get_cached_doc("Item Group", item_group)
-			item_tax_template = _get_item_tax_template(args, item_group_doc.taxes, out)
-			item_group = item_group_doc.parent_item_group
+		item_tax_template = _get_item_tax_template_from_item_group(args, item.item_group, out)
 
 	if out and args.get("child_doctype") and item_tax_template:
 		out.update(get_fetch_values(args.get("child_doctype"), "item_tax_template", item_tax_template))
 
 	return item_tax_template
+
+
+def _get_item_tax_template_from_item_group(args, item_group, out=None):
+	from frappe.utils.nestedset import get_ancestors_of
+
+	ancestors = get_ancestors_of("Item Group", item_group)
+	for group in [item_group, *ancestors]:
+		group_doc = frappe.get_cached_doc("Item Group", group)
+		item_tax_template = _get_item_tax_template(args, group_doc.taxes, out)
+		if item_tax_template:
+			return item_tax_template
+	return None
 
 
 def _get_item_tax_template(args, taxes, out=None, for_validate=False):
@@ -972,16 +981,30 @@ def insert_item_price(args):
 	):
 		return
 
-	item_price = frappe.db.get_value(
+	transaction_date = (
+		getdate(args.get("posting_date") or args.get("transaction_date") or args.get("posting_datetime"))
+		or getdate()
+	)
+
+	item_prices = frappe.get_all(
 		"Item Price",
-		{
+		filters={
 			"item_code": args.item_code,
 			"price_list": args.price_list,
 			"currency": args.currency,
 			"uom": args.stock_uom,
 		},
-		["name", "price_list_rate"],
-		as_dict=1,
+		fields=["name", "price_list_rate", "valid_from", "valid_upto"],
+		order_by="valid_from desc, creation desc",
+	)
+	item_price = next(
+		(
+			row
+			for row in item_prices
+			if (not row.valid_from or getdate(row.valid_from) <= transaction_date)
+			and (not row.valid_upto or getdate(row.valid_upto) >= transaction_date)
+		),
+		item_prices[0] if item_prices else None,
 	)
 
 	update_based_on_price_list_rate = stock_settings.update_price_list_based_on == "Price List Rate"
@@ -996,11 +1019,36 @@ def insert_item_price(args):
 		if not price_list_rate or item_price.price_list_rate == price_list_rate:
 			return
 
-		frappe.db.set_value("Item Price", item_price.name, "price_list_rate", price_list_rate)
-		frappe.msgprint(
-			_("Item Price updated for {0} in Price List {1}").format(args.item_code, args.price_list),
-			alert=True,
-		)
+		is_price_valid_for_transaction = (
+			not item_price.valid_from or getdate(item_price.valid_from) <= transaction_date
+		) and (not item_price.valid_upto or getdate(item_price.valid_upto) >= transaction_date)
+		if is_price_valid_for_transaction:
+			frappe.db.set_value("Item Price", item_price.name, "price_list_rate", price_list_rate)
+			frappe.msgprint(
+				_("Item Price updated for {0} in Price List {1}").format(
+					get_link_to_form("Item", args.item_code), args.price_list
+				),
+				alert=True,
+			)
+		else:
+			# if price is not valid for the transaction date, insert a new price list rate with updated price and future validity
+
+			item_price = frappe.new_doc(
+				"Item Price",
+				item_code=args.item_code,
+				price_list_rate=price_list_rate,
+				currency=args.currency,
+				uom=args.stock_uom,
+				price_list=args.price_list,
+				valid_from=transaction_date,
+			)
+			item_price.insert()
+			frappe.msgprint(
+				_("Item Price added for {0} in Price List - {1}").format(
+					get_link_to_form("Item", args.item_code), args.price_list
+				),
+				alert=True,
+			)
 	else:
 		rate_to_consider = (
 			(flt(args.price_list_rate) or flt(args.rate))
@@ -1017,11 +1065,14 @@ def insert_item_price(args):
 				"currency": args.currency,
 				"price_list_rate": price_list_rate,
 				"uom": args.stock_uom,
+				"valid_from": transaction_date,
 			}
 		)
 		item_price.insert()
 		frappe.msgprint(
-			_("Item Price added for {0} in Price List {1}").format(args.item_code, args.price_list),
+			_("Item Price added for {0} in Price List - {1}").format(
+				get_link_to_form("Item", args.item_code), args.price_list
+			),
 			alert=True,
 		)
 

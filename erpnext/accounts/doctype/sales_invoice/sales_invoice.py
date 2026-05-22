@@ -323,10 +323,22 @@ class SalesInvoice(SellingController):
 			)
 
 		self.set_against_income_account()
-		self.validate_time_sheets_are_submitted()
+
+		if self.is_return and not self.return_against and self.timesheets:
+			frappe.throw(_("Direct return is not allowed for Timesheet."))
+
+		if not self.is_return:
+			self.validate_time_sheets_are_submitted()
+
 		self.validate_multiple_billing("Delivery Note", "dn_detail", "amount")
-		if self.is_return:
-			self.timesheets = []
+
+		if self.is_return and self.return_against:
+			for row in self.timesheets:
+				if row.billing_hours:
+					row.billing_hours = -abs(row.billing_hours)
+				if row.billing_amount:
+					row.billing_amount = -abs(row.billing_amount)
+
 		self.update_packing_list()
 		self.set_billing_hours_and_amount()
 		self.update_timesheet_billing_for_project()
@@ -494,7 +506,7 @@ class SalesInvoice(SellingController):
 		if not cint(self.is_pos) == 1 and not self.is_return:
 			self.update_against_document_in_jv()
 
-		self.update_time_sheet(self.name)
+		self.update_time_sheet(None if (self.is_return and self.return_against) else self.name)
 
 		if frappe.db.get_single_value("Selling Settings", "sales_update_frequency") == "Each Transaction":
 			update_company_current_month_sales(self.company)
@@ -550,7 +562,7 @@ class SalesInvoice(SellingController):
 		self.check_if_consolidated_invoice()
 
 		super().before_cancel()
-		self.update_time_sheet(None)
+		self.update_time_sheet(self.return_against if (self.is_return and self.return_against) else None)
 
 	def on_cancel(self):
 		check_if_return_invoice_linked_with_payment_entry(self)
@@ -735,8 +747,20 @@ class SalesInvoice(SellingController):
 		for data in timesheet.time_logs:
 			if (
 				(self.project and args.timesheet_detail == data.name)
-				or (not self.project and not data.sales_invoice)
-				or (not sales_invoice and data.sales_invoice == self.name)
+				or (not self.project and not data.sales_invoice and args.timesheet_detail == data.name)
+				or (
+					not sales_invoice
+					and data.sales_invoice == self.name
+					and args.timesheet_detail == data.name
+				)
+				or (
+					self.is_return
+					and self.return_against
+					and data.sales_invoice
+					and data.sales_invoice == self.return_against
+					and not sales_invoice
+					and args.timesheet_detail == data.name
+				)
 			):
 				data.sales_invoice = sales_invoice
 
@@ -776,11 +800,25 @@ class SalesInvoice(SellingController):
 			payment.account = get_bank_cash_account(payment.mode_of_payment, self.company).get("account")
 
 	def validate_time_sheets_are_submitted(self):
+		# Note: This validation is skipped for return invoices
+		# to allow returns to reference already-billed timesheet details
 		for data in self.timesheets:
+			# Handle invoice duplication
+			if data.time_sheet and data.timesheet_detail:
+				if sales_invoice := frappe.db.get_value(
+					"Timesheet Detail", data.timesheet_detail, "sales_invoice"
+				):
+					frappe.throw(
+						_("Row {0}: Sales Invoice {1} is already created for {2}").format(
+							data.idx, frappe.bold(sales_invoice), frappe.bold(data.time_sheet)
+						)
+					)
 			if data.time_sheet:
 				status = frappe.db.get_value("Timesheet", data.time_sheet, "status")
-				if status not in ["Submitted", "Payslip"]:
-					frappe.throw(_("Timesheet {0} is already completed or cancelled").format(data.time_sheet))
+				if status not in ["Submitted", "Payslip", "Partially Billed"]:
+					frappe.throw(
+						_("Timesheet {0} cannot be invoiced in its current state").format(data.time_sheet)
+					)
 
 	def set_pos_fields(self, for_validate=False):
 		"""Set retail related fields from POS Profiles"""
@@ -804,11 +842,9 @@ class SalesInvoice(SellingController):
 		if self.pos_profile:
 			pos = frappe.get_doc("POS Profile", self.pos_profile)
 
-		if not self.get("payments") and not for_validate:
-			update_multi_mode_option(self, pos)
-
 		if pos:
 			if not for_validate:
+				update_multi_mode_option(self, pos)
 				self.tax_category = pos.get("tax_category")
 
 			if not for_validate and not self.customer:
@@ -1114,7 +1150,12 @@ class SalesInvoice(SellingController):
 					timesheet.billing_amount = ts_doc.total_billable_amount
 
 	def update_timesheet_billing_for_project(self):
-		if not self.timesheets and self.project and self.is_auto_fetch_timesheet_enabled():
+		if (
+			not self.is_return
+			and not self.timesheets
+			and self.project
+			and self.is_auto_fetch_timesheet_enabled()
+		):
 			self.add_timesheet_data()
 		else:
 			self.calculate_billing_amount_for_timesheet()
@@ -2518,7 +2559,7 @@ def make_inter_company_transaction(doctype, source_name, target_doc=None):
 				"doctype": target_doctype,
 				"postprocess": update_details,
 				"set_target_warehouse": "set_from_warehouse",
-				"field_no_map": ["taxes_and_charges", "set_warehouse", "shipping_address"],
+				"field_no_map": ["taxes_and_charges", "set_warehouse", "shipping_address", "cost_center"],
 			},
 			doctype + " Item": item_field_map,
 		},
@@ -2747,6 +2788,8 @@ def update_multi_mode_option(doc, pos_profile):
 		payment.account = payment_mode.default_account
 		payment.type = payment_mode.type
 
+	mop_refetched = bool(doc.payments)
+
 	doc.set("payments", [])
 	invalid_modes = []
 	mode_of_payments = [d.mode_of_payment for d in pos_profile.get("payments")]
@@ -2767,6 +2810,11 @@ def update_multi_mode_option(doc, pos_profile):
 		else:
 			msg = _("Please set default Cash or Bank account in Mode of Payments {}")
 		frappe.throw(msg.format(", ".join(invalid_modes)), title=_("Missing Account"))
+
+	if mop_refetched:
+		frappe.msgprint(
+			_("Payment methods refreshed. Please review before proceeding."), indicator="orange", alert=True
+		)
 
 
 def get_all_mode_of_payments(doc):

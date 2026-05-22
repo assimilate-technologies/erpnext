@@ -10,6 +10,7 @@ from frappe.query_builder.custom import ConstantColumn
 from frappe.utils import cint, flt
 
 import erpnext
+from erpnext import is_perpetual_inventory_enabled
 from erpnext.controllers.taxes_and_totals import init_landed_taxes_and_totals
 from erpnext.stock.doctype.serial_no.serial_no import get_serial_nos
 
@@ -160,6 +161,9 @@ class LandedCostVoucher(Document):
 				)
 
 	def validate_expense_accounts(self):
+		if not is_perpetual_inventory_enabled(self.company):
+			return
+
 		for t in self.taxes:
 			company = frappe.get_cached_value("Account", t.expense_account, "company")
 

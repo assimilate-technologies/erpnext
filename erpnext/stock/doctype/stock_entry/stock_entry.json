@@ -11,6 +11,7 @@
   "naming_series",
   "stock_entry_type",
   "outgoing_stock_entry",
+  "source_stock_entry",
   "purpose",
   "add_to_transit",
   "work_order",
@@ -70,6 +71,8 @@
   "address_display",
   "accounting_dimensions_section",
   "project",
+  "column_break_wgvc",
+  "cost_center",
   "other_info_tab",
   "printing_settings",
   "select_print_heading",
@@ -117,6 +120,15 @@
    "label": "Stock Entry (Outward GIT)",
    "options": "Stock Entry",
    "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.purpose == 'Disassemble'",
+   "fieldname": "source_stock_entry",
+   "fieldtype": "Link",
+   "label": "Source Stock Entry (Manufacture)",
+   "no_copy": 1,
+   "options": "Stock Entry",
+   "print_hide": 1
   },
   {
    "bold": 1,
@@ -699,6 +711,16 @@
    "fieldtype": "Data",
    "is_virtual": 1,
    "label": "Last Scanned Warehouse"
+  },
+  {
+   "fieldname": "column_break_wgvc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cost_center",
+   "fieldtype": "Link",
+   "label": "Cost Center",
+   "options": "Cost Center"
   }
  ],
  "icon": "fa fa-file-text",
@@ -706,7 +728,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-08-04 19:21:03.338958",
+ "modified": "2026-03-04 19:03:23.426082",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Stock Entry",

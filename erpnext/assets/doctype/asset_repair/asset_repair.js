@@ -131,7 +131,7 @@ frappe.ui.form.on("Asset Repair", {
 				function () {
 					frappe.route_options = {
 						voucher_no: frm.doc.name,
-						from_date: frm.doc.posting_date,
+						from_date: moment(frm.doc.completion_date).format("YYYY-MM-DD"),
 						to_date: moment(frm.doc.modified).format("YYYY-MM-DD"),
 						company: frm.doc.company,
 						categorize_by: "",

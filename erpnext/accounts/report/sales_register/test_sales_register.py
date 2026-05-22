@@ -5,6 +5,7 @@ from frappe.utils import getdate, today
 from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
 from erpnext.accounts.report.sales_register.sales_register import execute
 from erpnext.accounts.test.accounts_mixin import AccountsTestMixin
+from erpnext.selling.doctype.sales_order.test_sales_order import make_sales_order
 
 
 class TestItemWiseSalesRegister(AccountsTestMixin, FrappeTestCase):
@@ -74,6 +75,43 @@ class TestItemWiseSalesRegister(AccountsTestMixin, FrappeTestCase):
 
 		report_output = {k: v for k, v in res[0].items() if k in expected_result}
 		self.assertDictEqual(report_output, expected_result)
+
+	def test_sales_register_ignores_tax_rows_from_other_doctype(self):
+		si = self.create_sales_invoice(rate=98)
+
+		# Real workflow setup: create a Sales Order with taxes in the shared child table.
+		so = make_sales_order(
+			item=self.item,
+			company=self.company,
+			customer=self.customer,
+			rate=77,
+			do_not_save=1,
+			do_not_submit=1,
+		)
+		so.append(
+			"taxes",
+			{
+				"charge_type": "Actual",
+				"account_head": self.income_account,
+				"description": "SO Tax",
+				"tax_amount": 55.0,
+			},
+		)
+		so.insert()
+		so.submit()
+
+		# Mimic custom naming collision across doctypes (same parent value in shared child table).
+		frappe.rename_doc("Sales Order", so.name, si.name, force=True)
+
+		filters = frappe._dict({"from_date": today(), "to_date": today(), "company": self.company})
+		report = execute(filters)
+
+		res = [x for x in report[1] if x.get("voucher_no") == si.name]
+		self.assertEqual(len(res), 1)
+		result = frappe._dict(res[0])
+		self.assertEqual(result.net_total, 98.0)
+		self.assertEqual(result.tax_total, 0)
+		self.assertEqual(result.grand_total, 98.0)
 
 	def test_journal_with_cost_center_filter(self):
 		je1 = frappe.get_doc(

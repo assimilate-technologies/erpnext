@@ -826,18 +826,18 @@ def get_mapped_purchase_invoice(source_name, target_doc=None, ignore_permissions
 		target.set_payment_schedule()
 		target.credit_to = get_party_account("Supplier", source.supplier, source.company)
 
+	def get_billed_qty(po_item_name):
+		from frappe.query_builder.functions import Sum
+
+		table = frappe.qb.DocType("Purchase Invoice Item")
+		query = (
+			frappe.qb.from_(table)
+			.select(Sum(table.qty).as_("qty"))
+			.where((table.docstatus == 1) & (table.po_detail == po_item_name))
+		)
+		return query.run(pluck="qty")[0] or 0
+
 	def update_item(obj, target, source_parent):
-		def get_billed_qty(po_item_name):
-			from frappe.query_builder.functions import Sum
-
-			table = frappe.qb.DocType("Purchase Invoice Item")
-			query = (
-				frappe.qb.from_(table)
-				.select(Sum(table.qty).as_("qty"))
-				.where((table.docstatus == 1) & (table.po_detail == po_item_name))
-			)
-			return query.run(pluck="qty")[0] or 0
-
 		billed_qty = flt(get_billed_qty(obj.name))
 		target.qty = flt(obj.qty) - billed_qty
 
@@ -877,7 +877,11 @@ def get_mapped_purchase_invoice(source_name, target_doc=None, ignore_permissions
 				"wip_composite_asset": "wip_composite_asset",
 			},
 			"postprocess": update_item,
-			"condition": lambda doc: (doc.base_amount == 0 or abs(doc.billed_amt) < abs(doc.amount))
+			"condition": lambda doc: (
+				doc.base_amount == 0
+				or abs(doc.billed_amt) < abs(doc.amount)
+				or doc.qty > flt(get_billed_qty(doc.name))
+			)
 			and select_item(doc),
 		},
 		"Purchase Taxes and Charges": {"doctype": "Purchase Taxes and Charges", "reset_value": True},
@@ -912,6 +916,8 @@ def get_list_context(context=None):
 
 @frappe.whitelist()
 def update_status(status, name):
+	frappe.has_permission("Purchase Order", "submit", name, throw=True)
+
 	po = frappe.get_doc("Purchase Order", name)
 	po.update_status(status)
 	po.update_delivered_qty_in_sales_order()

@@ -26,7 +26,7 @@ frappe.ui.form.on("Sales Order", {
 			let color;
 			if (!doc.qty && frm.doc.has_unit_price_items) {
 				color = "yellow";
-			} else if (doc.stock_qty <= doc.delivered_qty) {
+			} else if (doc.stock_qty <= doc.actual_qty) {
 				color = "green";
 			} else {
 				color = "orange";
@@ -62,6 +62,13 @@ frappe.ui.form.on("Sales Order", {
 				frappe.model.set_value(d.doctype, d.name, "delivery_date", frm.doc.delivery_date);
 			});
 		}
+	},
+	transaction_date(frm) {
+		prevent_past_delivery_dates(frm);
+		frm.set_value("delivery_date", "");
+		frm.doc.items.forEach((d) => {
+			frappe.model.set_value(d.doctype, d.name, "delivery_date", "");
+		});
 	},
 
 	refresh: function (frm) {
@@ -766,11 +773,13 @@ erpnext.selling.SalesOrderController = class SalesOrderController extends erpnex
 				}
 				// payment request
 				if (flt(doc.per_billed) < 100 + frappe.boot.sysdefaults.over_billing_allowance) {
-					this.frm.add_custom_button(
-						__("Payment Request"),
-						() => this.make_payment_request(),
-						__("Create")
-					);
+					if (frappe.boot.user.in_create.includes("Payment Request")) {
+						this.frm.add_custom_button(
+							__("Payment Request"),
+							() => this.make_payment_request(),
+							__("Create")
+						);
+					}
 
 					if (frappe.model.can_create("Payment Entry")) {
 						this.frm.add_custom_button(
@@ -824,6 +833,24 @@ erpnext.selling.SalesOrderController = class SalesOrderController extends erpnex
 		}
 
 		this.order_type(doc);
+	}
+
+	items_add(doc, cdt, cdn) {
+		const row = frappe.get_doc(cdt, cdn);
+		const field_copy = [];
+		if (doc.project) {
+			frappe.model.set_value(cdt, cdn, "project", doc.project);
+		} else {
+			field_copy.push("project");
+		}
+		if (doc.delivery_date) {
+			frappe.model.set_value(cdt, cdn, "delivery_date", doc.delivery_date);
+		} else {
+			field_copy.push("delivery_date");
+		}
+		if (field_copy.length) {
+			this.frm.script_manager.copy_from_first_row("items", row, field_copy);
+		}
 	}
 
 	create_pick_list() {

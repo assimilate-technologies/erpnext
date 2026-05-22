@@ -15,6 +15,7 @@
   "bom_section",
   "update_bom_costs_automatically",
   "column_break_lhyt",
+  "allow_editing_of_items_and_quantities_in_work_order",
   "section_break_6",
   "default_wip_warehouse",
   "default_fg_warehouse",
@@ -243,13 +244,20 @@
    "fieldname": "enforce_time_logs",
    "fieldtype": "Check",
    "label": "Enforce Time Logs"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, the system will allow users to edit the raw materials and their quantities in the Work Order. The system will not reset the quantities as per the BOM, if the user has changed them.",
+   "fieldname": "allow_editing_of_items_and_quantities_in_work_order",
+   "fieldtype": "Check",
+   "label": "Allow Editing of Items and Quantities in Work Order"
   }
  ],
  "icon": "icon-wrench",
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-05-16 11:23:16.916512",
+ "modified": "2025-11-07 14:52:56.241459",
  "modified_by": "Administrator",
  "module": "Manufacturing",
  "name": "Manufacturing Settings",

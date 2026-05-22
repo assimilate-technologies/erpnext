@@ -73,6 +73,7 @@ def execute(filters=None):
 		inv_dimension_wise_dict, filters, inv_dimension_key=inv_dimension_key, opening_row=opening_row
 	)
 
+	item_wh_wise_prev_sle = {}
 	for sle in sl_entries:
 		item_detail = item_details[sle.item_code]
 
@@ -114,6 +115,21 @@ def execute(filters=None):
 		elif sle.voucher_type == "Stock Reconciliation":
 			sle["in_out_rate"] = sle.valuation_rate
 
+		if (
+			sle.voucher_type == "Stock Reconciliation"
+			and not sle.in_qty
+			and not sle.out_qty
+			and not sle.actual_qty
+		):
+			if prev_sle := item_wh_wise_prev_sle.get((sle.item_code, sle.warehouse)):
+				bal_qty = prev_sle.get("qty_after_transaction", 0)
+				qty = sle.qty_after_transaction - bal_qty
+				if qty > 0:
+					sle.in_qty = qty
+				elif qty < 0:
+					sle.out_qty = qty
+
+		item_wh_wise_prev_sle[(sle.item_code, sle.warehouse)] = sle
 		data.append(sle)
 
 		if include_uom:
@@ -686,6 +702,7 @@ def get_opening_balance(filters, columns, sl_entries, inv_dimension_wise_value=N
 			"posting_time": "00:00:00",
 			"project": project,
 		},
+		for_report=True,
 	)
 
 	# check if any SLEs are actually Opening Stock Reconciliation

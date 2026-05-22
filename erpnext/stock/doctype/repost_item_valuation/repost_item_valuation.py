@@ -33,14 +33,12 @@ class RepostItemValuation(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		affected_transactions: DF.Code | None
 		allow_negative_stock: DF.Check
 		allow_zero_rate: DF.Check
 		amended_from: DF.Link | None
 		based_on: DF.Literal["Transaction", "Item and Warehouse"]
 		company: DF.Link | None
 		current_index: DF.Int
-		distinct_item_and_warehouse: DF.Code | None
 		error_log: DF.LongText | None
 		gl_reposting_index: DF.Int
 		item_code: DF.Link | None
@@ -49,11 +47,14 @@ class RepostItemValuation(Document):
 		posting_time: DF.Time | None
 		recreate_stock_ledgers: DF.Check
 		reposting_data_file: DF.Attach | None
-		status: DF.Literal["Queued", "In Progress", "Completed", "Skipped", "Failed"]
+		reposting_reference: DF.Data | None
+		status: DF.Literal["Queued", "In Progress", "Completed", "Skipped", "Failed", "Cancelled"]
 		total_reposting_count: DF.Int
+		total_vouchers: DF.Int
 		via_landed_cost_voucher: DF.Check
 		voucher_no: DF.DynamicLink | None
 		voucher_type: DF.Link | None
+		vouchers_posted: DF.Int
 		warehouse: DF.Link | None
 	# end: auto-generated types
 
@@ -73,13 +74,31 @@ class RepostItemValuation(Document):
 		repost(self)
 
 	def validate(self):
+		self.set_default_posting_time()
 		self.set_company()
+		self.validate_update_stock()
 		self.validate_period_closing_voucher()
 		self.set_status(write=False)
 		self.reset_field_values()
 		self.validate_accounts_freeze()
 		self.reset_recreate_stock_ledgers()
 		self.validate_recreate_stock_ledgers()
+
+	def set_default_posting_time(self):
+		if not self.posting_time:
+			self.posting_time = nowtime()
+
+		if not self.posting_date:
+			frappe.throw(_("Posting date is required"))
+
+	def validate_update_stock(self):
+		if self.voucher_type in ["Sales Invoice", "Purchase Invoice"]:
+			update_stock = frappe.get_value(self.voucher_type, self.voucher_no, "update_stock")
+			if not update_stock:
+				msg = _(
+					"Since {0} has 'Update Stock' disabled, you cannot create repost item valuation against it"
+				).format(get_link_to_form(self.voucher_type, self.voucher_no))
+				frappe.throw(msg)
 
 	def validate_recreate_stock_ledgers(self):
 		if not self.recreate_stock_ledgers:
@@ -250,6 +269,9 @@ class RepostItemValuation(Document):
 		self.distinct_item_and_warehouse = None
 		self.items_to_be_repost = None
 		self.gl_reposting_index = 0
+		self.total_reposting_count = 0
+		self.total_vouchers = 0
+		self.vouchers_posted = 0
 		self.clear_attachment()
 		self.db_update()
 
@@ -334,8 +356,15 @@ def repost(doc):
 			message = message.get("message")
 
 		status = "Failed"
-		# If failed because of timeout, set status to In Progress
-		if traceback and ("timeout" in traceback.lower() or "Deadlock found" in traceback):
+		# If failed because of a recoverable error (timeout, deadlock), set status to In Progress
+		# so the scheduler automatically retries instead of leaving it permanently failed.
+		# NOTE: isinstance check comes first because the traceback string matching is unreliable
+		# when SIGALRM kills the process mid-C-extension (JobTimeoutException may not appear
+		# in the traceback if the exception handler itself was interrupted).
+		traceback_lower = traceback.lower() if traceback else ""
+		if isinstance(e, RecoverableErrors) or (
+			traceback_lower and ("timeout" in traceback_lower or "deadlock found" in traceback_lower)
+		):
 			status = "In Progress"
 
 		if traceback:
@@ -381,7 +410,7 @@ def repost_sl_entries(doc):
 		)
 	else:
 		repost_future_sle(
-			args=[
+			items_to_be_repost=[
 				frappe._dict(
 					{
 						"item_code": doc.item_code,

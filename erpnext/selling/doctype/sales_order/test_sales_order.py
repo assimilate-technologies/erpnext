@@ -57,6 +57,45 @@ class TestSalesOrder(AccountsTestMixin, FrappeTestCase):
 	def tearDown(self):
 		frappe.set_user("Administrator")
 
+	@change_settings(
+		"Stock Settings",
+		{
+			"auto_insert_price_list_rate_if_missing": 1,
+			"update_existing_price_list_rate": 1,
+			"update_price_list_based_on": "Rate",
+		},
+	)
+	def test_sales_order_expired_item_price(self):
+		price_list = "_Test Price List"
+
+		item_1 = make_item("_Test Expired Item 1", {"is_stock_item": 1})
+
+		frappe.db.delete("Item Price", {"item_code": item_1.item_code})
+
+		item_price = frappe.new_doc("Item Price")
+		item_price.item_code = item_1.item_code
+		item_price.price_list = price_list
+		item_price.price_list_rate = 100
+		item_price.valid_from = add_days(today(), -10)
+		item_price.valid_upto = add_days(today(), -5)
+		item_price.save()
+
+		so = make_sales_order(
+			item_code=item_1.item_code, qty=1, rate=1000, selling_price_list=price_list, do_not_save=True
+		)
+		so.save()
+		so.reload()
+
+		self.assertEqual(frappe.db.get_value("Item Price", item_price.name, "price_list_rate"), 100)
+		self.assertEqual(
+			frappe.db.count("Item Price", {"item_code": item_1.item_code, "price_list": price_list}),
+			2,
+		)
+		all_item_prices = frappe.get_all(
+			"Item Price", filters={"item_code": item_1.item_code}, order_by="valid_from desc"
+		)
+		self.assertEqual(frappe.db.get_value("Item Price", all_item_prices[0].name, "price_list_rate"), 1000)
+
 	def test_sales_order_skip_delivery_note(self):
 		so = make_sales_order(do_not_submit=True)
 		so.order_type = "Maintenance"
@@ -1549,7 +1588,7 @@ class TestSalesOrder(AccountsTestMixin, FrappeTestCase):
 		make_item(  # template item
 			"Test-WO-Tshirt",
 			{
-				"has_variant": 1,
+				"has_variants": 1,
 				"variant_based_on": "Item Attribute",
 				"attributes": [{"attribute": "Test Colour"}],
 			},

@@ -2546,6 +2546,7 @@ def make_customer(customer_name, currency=None):
 		customer = frappe.new_doc("Customer")
 		customer.customer_name = customer_name
 		customer.type = "Individual"
+		customer.customer_group = "Individual"
 
 		if currency:
 			customer.default_currency = currency

@@ -243,6 +243,20 @@ frappe.ui.form.on("Work Order", {
 
 		frm.trigger("add_custom_button_to_return_components");
 		frm.trigger("allow_alternative_item");
+		frm.trigger("toggle_items_editable");
+	},
+
+	toggle_items_editable(frm) {
+		let allow_edit = true;
+		if (!frm.doc.__onload?.allow_editing_items) allow_edit = false;
+
+		frm.set_df_property("required_items", "cannot_delete_rows", !allow_edit);
+		frm.set_df_property("required_items", "cannot_add_rows", !allow_edit);
+
+		const grid = frm.fields_dict["required_items"].grid;
+		grid.update_docfield_property("item_code", "read_only", !allow_edit);
+		grid.update_docfield_property("required_qty", "read_only", !allow_edit);
+		grid.refresh();
 	},
 
 	add_custom_button_to_return_components: function (frm) {
@@ -401,7 +415,7 @@ frappe.ui.form.on("Work Order", {
 
 	make_disassembly_order(frm) {
 		erpnext.work_order
-			.show_prompt_for_qty_input(frm, "Disassemble")
+			.show_disassembly_prompt(frm)
 			.then((data) => {
 				if (flt(data.qty) <= 0) {
 					frappe.msgprint(__("Disassemble Qty cannot be less than or equal to <b>0</b>."));
@@ -411,11 +425,14 @@ frappe.ui.form.on("Work Order", {
 					work_order_id: frm.doc.name,
 					purpose: "Disassemble",
 					qty: data.qty,
+					source_stock_entry: data.source_stock_entry,
 				});
 			})
 			.then((stock_entry) => {
-				frappe.model.sync(stock_entry);
-				frappe.set_route("Form", stock_entry.doctype, stock_entry.name);
+				if (stock_entry) {
+					frappe.model.sync(stock_entry);
+					frappe.set_route("Form", stock_entry.doctype, stock_entry.name);
+				}
 			});
 	},
 
@@ -863,6 +880,60 @@ erpnext.work_order = {
 			}
 		}
 		return flt(max, precision("qty"));
+	},
+
+	show_disassembly_prompt: function (frm) {
+		let max_qty = flt(frm.doc.produced_qty - frm.doc.disassembled_qty);
+
+		let fields = [
+			{
+				fieldtype: "Link",
+				label: __("Source Manufacture Entry"),
+				fieldname: "source_stock_entry",
+				options: "Stock Entry",
+				description: __("Optional. Select a specific manufacture entry to reverse."),
+				get_query: () => {
+					return {
+						filters: {
+							work_order: frm.doc.name,
+							purpose: "Manufacture",
+							docstatus: 1,
+						},
+					};
+				},
+				onchange: async function () {
+					if (!frm.disassembly_prompt) return;
+
+					let se_name = this.value;
+					let qty = max_qty;
+					if (se_name) {
+						qty = await frappe.xcall(
+							"erpnext.manufacturing.doctype.work_order.work_order.get_disassembly_available_qty",
+							{ stock_entry_name: se_name }
+						);
+					}
+
+					frm.disassembly_prompt.set_value("qty", qty);
+					frm.disassembly_prompt.fields_dict.qty.set_description(__("Max: {0}", [qty]));
+				},
+			},
+			{
+				fieldtype: "Float",
+				label: __("Qty for {0}", [__("Disassemble")]),
+				fieldname: "qty",
+				description: __("Max: {0}", [max_qty]),
+				default: max_qty,
+			},
+		];
+
+		return new Promise((resolve, reject) => {
+			frm.disassembly_prompt = frappe.prompt(
+				fields,
+				(data) => resolve(data),
+				__("Disassemble"),
+				__("Create")
+			);
+		});
 	},
 
 	show_prompt_for_qty_input: function (frm, purpose) {

@@ -68,6 +68,7 @@ from erpnext.stock.doctype.item.item import get_uom_conv_factor
 from erpnext.stock.doctype.packed_item.packed_item import make_packing_list
 from erpnext.stock.get_item_details import (
 	_get_item_tax_template,
+	_get_item_tax_template_from_item_group,
 	get_conversion_factor,
 	get_item_details,
 	get_item_tax_map,
@@ -325,6 +326,7 @@ class AccountsController(TransactionBase):
 		# Determine if drop ship applies
 		is_drop_ship = self.doctype in {
 			"Purchase Order",
+			"Purchase Invoice",
 			"Sales Order",
 			"Sales Invoice",
 		} and self.is_drop_ship(self.items)
@@ -1751,6 +1753,7 @@ class AccountsController(TransactionBase):
 									arg.get("referenced_row"),
 									arg.get("cost_center"),
 									dimensions_dict,
+									arg.get("project"),
 								)
 								frappe.msgprint(
 									_("Exchange Gain/Loss amount has been booked through {0}").format(
@@ -1835,6 +1838,7 @@ class AccountsController(TransactionBase):
 							d.idx,
 							self.cost_center,
 							dimensions_dict,
+							self.project,
 						)
 						frappe.msgprint(
 							_("Exchange Gain/Loss amount has been booked through {0}").format(
@@ -2297,6 +2301,16 @@ class AccountsController(TransactionBase):
 
 		return stock_items
 
+	def get_asset_items(self):
+		asset_items = []
+		item_codes = list(set(item.item_code for item in self.get("items")))
+		if item_codes:
+			asset_items = frappe.db.get_values(
+				"Item", {"name": ["in", item_codes], "is_fixed_asset": 1}, pluck="name", cache=True
+			)
+
+		return asset_items
+
 	def calculate_total_advance_from_ledger(self):
 		adv = frappe.qb.DocType("Advance Payment Ledger Entry")
 		return (
@@ -2502,13 +2516,14 @@ class AccountsController(TransactionBase):
 		grand_total = self.get("rounded_total") or self.grand_total
 		automatically_fetch_payment_terms = 0
 
-		if self.doctype in ("Sales Invoice", "Purchase Invoice"):
-			base_grand_total = base_grand_total - flt(self.base_write_off_amount)
-			grand_total = grand_total - flt(self.write_off_amount)
+		if self.doctype in ("Sales Invoice", "Purchase Invoice", "Sales Order"):
 			po_or_so, doctype, fieldname = self.get_order_details()
 			automatically_fetch_payment_terms = cint(
 				frappe.db.get_single_value("Accounts Settings", "automatically_fetch_payment_terms")
 			)
+			if self.doctype != "Sales Order":
+				base_grand_total = base_grand_total - flt(self.base_write_off_amount)
+				grand_total = grand_total - flt(self.write_off_amount)
 
 		if self.get("total_advance"):
 			if party_account_currency == self.company_currency:
@@ -2524,7 +2539,7 @@ class AccountsController(TransactionBase):
 
 		if not self.get("payment_schedule"):
 			if (
-				self.doctype in ["Sales Invoice", "Purchase Invoice"]
+				self.doctype in ["Sales Invoice", "Purchase Invoice", "Sales Order"]
 				and automatically_fetch_payment_terms
 				and self.linked_order_has_payment_terms(po_or_so, fieldname, doctype)
 			):
@@ -2579,17 +2594,23 @@ class AccountsController(TransactionBase):
 			self.ignore_default_payment_terms_template = 1
 
 	def get_order_details(self):
+		if not self.get("items"):
+			return None, None, None
 		if self.doctype == "Sales Invoice":
-			po_or_so = self.get("items") and self.get("items")[0].get("sales_order")
-			po_or_so_doctype = "Sales Order"
-			po_or_so_doctype_name = "sales_order"
-
+			prev_doc = self.get("items")[0].get("sales_order")
+			prev_doctype = "Sales Order"
+			prev_doctype_name = "sales_order"
+		elif self.doctype == "Purchase Invoice":
+			prev_doc = self.get("items")[0].get("purchase_order")
+			prev_doctype = "Purchase Order"
+			prev_doctype_name = "purchase_order"
+		elif self.doctype == "Sales Order":
+			prev_doc = self.get("items")[0].get("prevdoc_docname")
+			prev_doctype = "Quotation"
+			prev_doctype_name = "prevdoc_docname"
 		else:
-			po_or_so = self.get("items") and self.get("items")[0].get("purchase_order")
-			po_or_so_doctype = "Purchase Order"
-			po_or_so_doctype_name = "purchase_order"
-
-		return po_or_so, po_or_so_doctype, po_or_so_doctype_name
+			return None, None, None
+		return prev_doc, prev_doctype, prev_doctype_name
 
 	def linked_order_has_payment_terms(self, po_or_so, fieldname, doctype):
 		if po_or_so and self.all_items_have_same_po_or_so(po_or_so, fieldname):
@@ -2685,7 +2706,9 @@ class AccountsController(TransactionBase):
 
 		for d in self.get("payment_schedule"):
 			d.validate_from_to_dates("discount_date", "due_date")
-			if self.doctype == "Sales Order" and getdate(d.due_date) < getdate(self.transaction_date):
+			if self.doctype in ["Sales Order", "Quotation"] and getdate(d.due_date) < getdate(
+				self.transaction_date
+			):
 				frappe.throw(
 					_("Row {0}: Due Date in the Payment Terms table cannot be before Posting Date").format(
 						d.idx
@@ -3625,6 +3648,10 @@ def set_child_tax_template_and_map(item, child_item, parent_doc):
 	}
 
 	child_item.item_tax_template = _get_item_tax_template(args, item.taxes)
+
+	if not child_item.get("item_tax_template"):
+		child_item.item_tax_template = _get_item_tax_template_from_item_group(args, item.item_group)
+
 	if child_item.get("item_tax_template"):
 		child_item.item_tax_rate = get_item_tax_map(
 			parent_doc.get("company"), child_item.item_tax_template, as_json=True
