@@ -1050,6 +1050,44 @@ class TestPurchaseReceipt(FrappeTestCase):
 
 		pr.cancel()
 
+	def test_inter_company_purchase_receipt_does_not_inherit_party_fields(self):
+		"""
+		Party-derived fields on DN (from Customer) must not leak into the mapped PR.
+		"""
+		from erpnext.stock.doctype.delivery_note.delivery_note import make_inter_company_purchase_receipt
+		from erpnext.stock.doctype.delivery_note.test_delivery_note import create_delivery_note
+
+		prepare_data_for_internal_transfer()
+
+		customer = "_Test Internal Customer 2"
+		company = "_Test Company with perpetual inventory"
+
+		stock = make_purchase_receipt(warehouse="Stores - TCP1", company=company)
+
+		dn = create_delivery_note(
+			company=company,
+			customer=customer,
+			cost_center="Main - TCP1",
+			expense_account="Cost of Goods Sold - TCP1",
+			qty=1,
+			rate=100,
+			warehouse="Stores - TCP1",
+			target_warehouse="Work In Progress - TCP1",
+			do_not_submit=True,
+		)
+		# Stamp customer-side party fields onto the DN
+		dn.tax_category = "_Test Tax Category 2"
+		dn.language = "ar"
+		dn.submit()
+
+		pr = make_inter_company_purchase_receipt(dn.name)
+
+		supplier = frappe.get_doc("Supplier", "_Test Internal Supplier 2")
+		self.assertEqual(pr.tax_category or None, supplier.tax_category or None)
+		self.assertEqual(pr.language or None, supplier.language or None)
+		dn.cancel()
+		stock.cancel()
+
 	def test_lcv_for_internal_transfer(self):
 		from erpnext.stock.doctype.delivery_note.delivery_note import make_inter_company_purchase_receipt
 		from erpnext.stock.doctype.delivery_note.test_delivery_note import create_delivery_note
@@ -5169,6 +5207,157 @@ class TestPurchaseReceipt(FrappeTestCase):
 		frappe.db.set_single_value(
 			"Buying Settings", "set_landed_cost_based_on_purchase_invoice_rate", original_value
 		)
+
+	@change_settings(
+		"Buying Settings", {"set_landed_cost_based_on_purchase_invoice_rate": 1, "maintain_same_rate": 0}
+	)
+	def test_srbnb_with_inclusive_tax_and_rate_change_in_pi(self):
+		"""
+		When 'Set Landed Cost Based on PI Rate' is enabled and PI has an inclusive tax:
+		  - PR: qty=2, rate=1000 INR → base_net_amount=2000
+		  - PI: rate changed to 2000, 5% tax included in basic rate
+		      → PI base_net_amount = 2 * 2000 / 1.05 ≈ 3809.52
+
+		The system must use PI's base_net_amount (not amount=4000) so that
+		SRBNB credit on PR = 3809.52, not 4000.
+		"""
+		company = "_Test Company with perpetual inventory"
+		warehouse = "Stores - TCP1"
+		cost_center = "Main - TCP1"
+
+		item_code = make_item(
+			"Test Item for SRBNB Inclusive Tax Rate Change",
+			{"is_stock_item": 1},
+		).name
+
+		pr = make_purchase_receipt(
+			item_code=item_code,
+			qty=2,
+			rate=1000,
+			company=company,
+			warehouse=warehouse,
+			cost_center=cost_center,
+		)
+
+		pi = make_purchase_invoice(pr.name)
+		pi.items[0].rate = 2000
+		pi.append(
+			"taxes",
+			{
+				"charge_type": "On Net Total",
+				"account_head": "_Test Account VAT - TCP1",
+				"category": "Total",
+				"add_deduct_tax": "Add",
+				"included_in_print_rate": 1,
+				"rate": 5,
+				"description": "Test Inclusive Tax",
+				"cost_center": cost_center,
+			},
+		)
+		pi.save()
+		pi.submit()
+
+		pr.reload()
+
+		# PI base_net_amount = qty * (rate / (1 + tax_rate/100)) = 2 * (2000 / 1.05)
+		pi_base_net_amount = flt(2 * 2000 / 1.05, 2)
+		pr_base_net_amount = flt(pr.items[0].amount, 2)  # 2 * 1000 = 2000
+		expected_diff = flt(pi_base_net_amount - pr_base_net_amount, 2)
+
+		self.assertAlmostEqual(pr.items[0].amount_difference_with_purchase_invoice, expected_diff, places=2)
+
+		# Total SRBNB credit = PR base_net_amount + amount_difference = PI base_net_amount
+		srbnb_account = "Stock Received But Not Billed - TCP1"
+		gl_entries = get_gl_entries("Purchase Receipt", pr.name, skip_cancelled=True)
+		srbnb_credit = sum(flt(row.credit) for row in gl_entries if row.account == srbnb_account)
+		self.assertAlmostEqual(srbnb_credit, pi_base_net_amount, places=2)
+
+	@change_settings(
+		"Buying Settings", {"set_landed_cost_based_on_purchase_invoice_rate": 1, "maintain_same_rate": 0}
+	)
+	def test_srbnb_with_inclusive_tax_and_exchange_rate_change_in_pi(self):
+		"""
+		When 'Set Landed Cost Based on PI Rate' is enabled, PI has an inclusive tax, and only
+		the exchange rate changes on the PI (rate stays the same):
+		  - PR: qty=2, rate=100 USD, conversion_rate=70 → base_net_amount=14000 INR
+		  - PI: same rate=100 USD, conversion_rate changed to 90, 5% tax included in basic rate
+		      → PI base_net_amount = 2 * (100 / 1.05) * 90 ≈ 17142.86 INR
+
+		The system must use PI's base_net_amount (not amount = 2*100*90 = 18000) so that
+		SRBNB credit on PR = 17142.86, not 18000.
+		"""
+		from erpnext.accounts.doctype.account.test_account import create_account
+
+		company = "_Test Company with perpetual inventory"
+		warehouse = "Stores - TCP1"
+		cost_center = "Main - TCP1"
+
+		party_account = create_account(
+			account_name="USD Payable For SRBNB Exchange Rate Test",
+			parent_account="Accounts Payable - TCP1",
+			account_type="Payable",
+			company=company,
+			account_currency="USD",
+		)
+
+		supplier = create_supplier(
+			supplier_name="_Test USD Supplier for SRBNB Exchange Rate",
+			default_currency="USD",
+			party_account=party_account,
+		).name
+
+		item_code = make_item(
+			"Test Item for SRBNB Inclusive Tax Exchange Rate Change",
+			{"is_stock_item": 1},
+		).name
+
+		pr = make_purchase_receipt(
+			item_code=item_code,
+			qty=2,
+			rate=100,
+			currency="USD",
+			conversion_rate=70,
+			company=company,
+			warehouse=warehouse,
+			supplier=supplier,
+		)
+
+		pi = make_purchase_invoice(pr.name)
+		pi.conversion_rate = 90
+		pi.append(
+			"taxes",
+			{
+				"charge_type": "On Net Total",
+				"account_head": "_Test Account VAT - TCP1",
+				"category": "Total",
+				"add_deduct_tax": "Add",
+				"included_in_print_rate": 1,
+				"rate": 5,
+				"description": "Test Inclusive Tax",
+				"cost_center": cost_center,
+			},
+		)
+		pi.save()
+		pi.submit()
+
+		pr.reload()
+
+		# PI base_net_amount = qty * (rate / (1 + tax_rate/100)) * new_conversion_rate
+		#                    = 2 * (100 / 1.05) * 90 ≈ 17142.86 INR
+		# PR base_net_amount = qty * rate * pr_conversion_rate = 2 * 100 * 70 = 14000 INR
+		tax_amount_pr = (200 - flt(200 / 1.05, 2)) * 90
+
+		pi_base_net_amount = flt(2 * 100 * 90) - flt(tax_amount_pr)
+		pr_base_net_amount = flt(2 * 100 * 70)
+		expected_diff = flt(pi_base_net_amount - pr_base_net_amount)
+
+		self.assertAlmostEqual(pr.items[0].amount_difference_with_purchase_invoice, expected_diff, places=2)
+
+		# Total SRBNB credit = PR base_net_amount + amount_difference = PI base_net_amount
+		srbnb_account = "Stock Received But Not Billed - TCP1"
+		gl_entries = get_gl_entries("Purchase Receipt", pr.name, skip_cancelled=True)
+		srbnb_credit = sum(flt(row.credit) for row in gl_entries if row.account == srbnb_account)
+		self.assertAlmostEqual(srbnb_credit, pi_base_net_amount, places=2)
 
 
 def prepare_data_for_internal_transfer():

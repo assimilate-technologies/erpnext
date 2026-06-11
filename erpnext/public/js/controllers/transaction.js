@@ -418,7 +418,6 @@ erpnext.TransactionController = class TransactionController extends erpnext.taxe
 			}
 		})
 	}
-
 	onload_post_render() {
 		if(this.frm.doc.__islocal && !(this.frm.doc.taxes || []).length
 			&& !this.frm.doc.__onload?.load_after_mapping) {
@@ -659,15 +658,23 @@ erpnext.TransactionController = class TransactionController extends erpnext.taxe
 								},
 								async () => {
 									// for internal customer instead of pricing rule directly apply valuation rate on item
-									const fetch_valuation_rate_for_internal_transactions = await frappe.db.get_single_value(
-										"Accounts Settings", "fetch_valuation_rate_for_internal_transaction"
-									);
-									if ((me.frm.doc.is_internal_customer || me.frm.doc.is_internal_supplier) && fetch_valuation_rate_for_internal_transactions) {
-										me.get_incoming_rate(item, me.frm.posting_date, me.frm.posting_time,
-											me.frm.doc.doctype, me.frm.doc.company);
-									} else {
-										me.frm.script_manager.trigger("price_list_rate", cdt, cdn);
+									if ((me.frm.doc.is_internal_customer || me.frm.doc.is_internal_supplier)) {
+										const fetch_valuation_rate_for_internal_transactions = await frappe.db.get_single_value(
+											"Accounts Settings", "fetch_valuation_rate_for_internal_transaction"
+										);
+										if (fetch_valuation_rate_for_internal_transactions) {
+											me.get_incoming_rate(
+												item,
+												me.frm.posting_date,
+												me.frm.posting_time,
+												me.frm.doc.doctype,
+												me.frm.doc.company
+											);
+											return;
+										}
 									}
+
+									me.frm.script_manager.trigger("price_list_rate", cdt, cdn);
 								},
 								() => {
 									if (me.frm.doc.is_internal_customer || me.frm.doc.is_internal_supplier) {
@@ -2506,11 +2513,29 @@ erpnext.TransactionController = class TransactionController extends erpnext.taxe
 			method: "erpnext.controllers.stock_controller.check_item_quality_inspection",
 			args: {
 				doctype: this.frm.doc.doctype,
-				items: this.frm.doc.items
+				docstatus: this.frm.doc.docstatus,
+				items: this.frm.doc.items,
 			},
 			freeze: true,
 			callback: function (r) {
-				r.message.forEach(item => {
+				if (r.message.length == 0) {
+					let type = inspection_type === "Incoming" ? "Purchase" : "Delivery";
+					let fieldname =
+						inspection_type === "Incoming"
+							? "Inspection Required before Purchase"
+							: "Inspection Required before Delivery";
+
+					frappe.msgprint({
+						title: __("Quality Inspection Not Configured"),
+						message: __(`Enable <b>{0}</b> on the Item master to proceed with {1} inspection.`, [
+							fieldname,
+							type,
+						]),
+					});
+					return;
+				}
+
+				r.message.forEach((item) => {
 					if (me.has_inspection_required(item)) {
 						let dialog_items = dialog.fields_dict.items;
 						dialog_items.df.data.push({
