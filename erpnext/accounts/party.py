@@ -510,11 +510,6 @@ def get_party_advance_account(party_type, party, company):
 	return account
 
 
-@frappe.whitelist()
-def get_party_bank_account(party_type, party):
-	return frappe.db.get_value("Bank Account", {"party_type": party_type, "party": party, "is_default": 1})
-
-
 def get_party_account_currency(party_type, party, company):
 	def generator():
 		party_account = get_party_account(party_type, party, company)
@@ -549,11 +544,19 @@ def get_party_gle_currency(party_type, party, company):
 
 def get_party_gle_account(party_type, party, company):
 	def generator():
-		existing_gle_account = frappe.db.sql(
-			"""select account from `tabGL Entry`
-			where docstatus=1 and company=%(company)s and party_type=%(party_type)s and party=%(party)s
-			limit 1""",
-			{"company": company, "party_type": party_type, "party": party},
+		gl = qb.DocType("GL Entry")
+		existing_gle_account = (
+			qb.from_(gl)
+			.select(gl.account)
+			.where(
+				(gl.docstatus == 1)
+				& (gl.company == company)
+				& (gl.party_type == party_type)
+				& (gl.party == party)
+				& (gl.is_cancelled == 0)
+			)
+			.limit(1)
+			.run()
 		)
 
 		return existing_gle_account[0][0] if existing_gle_account else None
@@ -918,6 +921,15 @@ def get_dashboard_info(party_type, party, loyalty_program=None):
 
 		if party_type == "Supplier":
 			info["total_unpaid"] = -1 * info["total_unpaid"]
+
+		if info["total_unpaid"] < 0:
+			info["balance_label"] = (
+				"Total Advance Paid" if party_type == "Supplier" else "Total Advance Received"
+			)
+			info["balance_amount"] = abs(info["total_unpaid"])
+		else:
+			info["balance_label"] = "Total Unpaid"
+			info["balance_amount"] = info["total_unpaid"]
 
 		company_wise_info.append(info)
 

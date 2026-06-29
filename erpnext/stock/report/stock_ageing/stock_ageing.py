@@ -306,6 +306,11 @@ class FIFOSlots:
 		# prepare single sle voucher detail lookup
 		self.prepare_stock_reco_voucher_wise_count()
 
+		if stock_ledger_entries is None:
+			# nested queries invalidate the streaming cursor below,
+			# so batchwise valuation flags must be resolved beforehand
+			self._prefetch_batchwise_valuations()
+
 		with frappe.db.unbuffered_cursor():
 			if stock_ledger_entries is None:
 				stock_ledger_entries = self._get_stock_ledger_entries()
@@ -353,7 +358,7 @@ class FIFOSlots:
 		if row.voucher_type != "Stock Reconciliation":
 			return
 
-		if not row.batch_no or row.serial_no or row.serial_and_batch_bundle:
+		if row.has_serial_no and (not row.batch_no or row.serial_no or row.serial_and_batch_bundle):
 			if row.voucher_detail_no in self.stock_reco_voucher_wise_count:
 				# Legacy reconciliation with a single SLE has qty_after_transaction and
 				# stock_value_difference without an outward entry, so reset the queue first.
@@ -423,11 +428,37 @@ class FIFOSlots:
 
 	def _get_batchwise_valuation(self, batch_no: str):
 		if batch_no not in self.batchwise_valuation_by_batch:
+			# only reachable when stock ledger entries are passed in directly;
+			# the streaming path prefetches all flags before iteration
 			self.batchwise_valuation_by_batch[batch_no] = frappe.db.get_value(
 				"Batch", batch_no, "use_batchwise_valuation"
 			)
 
 		return self.batchwise_valuation_by_batch[batch_no]
+
+	def _prefetch_batchwise_valuations(self) -> None:
+		sle = frappe.qb.DocType("Stock Ledger Entry")
+		batch = frappe.qb.DocType("Batch")
+		to_date = get_datetime(self.filters.get("to_date") + " 23:59:59")
+
+		query = (
+			frappe.qb.from_(sle)
+			.left_join(batch)
+			.on(sle.batch_no == batch.name)
+			.select(sle.batch_no, batch.use_batchwise_valuation)
+			.distinct()
+			.where(
+				(sle.batch_no.isnotnull())
+				& (sle.company == self.filters.get("company"))
+				& (sle.posting_datetime <= to_date)
+				& (sle.is_cancelled != 1)
+			)
+		)
+
+		query = self._apply_filter(query, sle, "item_code")
+
+		for batch_no, use_batchwise_valuation in query.run():
+			self.batchwise_valuation_by_batch[batch_no] = use_batchwise_valuation
 
 	def _init_key_stores(self, row: dict) -> tuple:
 		"Initialise keys and FIFO Queue."
@@ -1052,6 +1083,7 @@ class FIFOSlots:
 				(doctype.voucher_type == "Stock Reconciliation")
 				& (doctype.docstatus < 2)
 				& (doctype.is_cancelled == 0)
+				& (item.has_serial_no == 1)
 			)
 			.groupby(doctype.voucher_detail_no)
 		)

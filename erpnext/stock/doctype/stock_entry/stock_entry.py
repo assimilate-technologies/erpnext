@@ -52,7 +52,7 @@ from erpnext.stock.serial_batch_bundle import (
 	get_serial_or_batch_items,
 )
 from erpnext.stock.stock_ledger import NegativeStockError, get_previous_sle, get_valuation_rate
-from erpnext.stock.utils import get_bin, get_incoming_rate
+from erpnext.stock.utils import get_bin, get_combine_datetime, get_incoming_rate
 
 
 class FinishedGoodError(frappe.ValidationError):
@@ -1146,10 +1146,12 @@ class StockEntry(StockController):
 		if self.purpose not in ["Manufacture", "Material Transfer for Manufacture"]:
 			return
 
-		if not frappe.db.get_single_value("Manufacturing Settings", "validate_components_quantities_per_bom"):
+		if not self.fg_completed_qty:
+			if self.work_order and self.purpose == "Material Transfer for Manufacture":
+				self._validate_no_excess_transfer()
 			return
 
-		if not self.fg_completed_qty:
+		if not frappe.db.get_single_value("Manufacturing Settings", "validate_components_quantities_per_bom"):
 			return
 
 		raw_materials = self.get_bom_raw_materials(self.fg_completed_qty)
@@ -1172,6 +1174,59 @@ class StockEntry(StockController):
 						get_link_to_form("BOM", self.bom_no), frappe.bold(item_code)
 					),
 					title=_("Missing Item"),
+				)
+
+	def _validate_no_excess_transfer(self):
+		if self.is_return:
+			return
+
+		if (
+			frappe.db.get_single_value("Manufacturing Settings", "backflush_raw_materials_based_on")
+			== "Material Transferred for Manufacture"
+		):
+			return
+
+		wo = self.pro_doc
+		if not wo:
+			return
+
+		pending_by_item = {}
+		for r in wo.required_items:
+			pending_by_item[r.item_code] = (
+				pending_by_item.get(r.item_code, 0.0) + flt(r.required_qty) - flt(r.transferred_qty)
+			)
+
+		transfer_by_item = {}
+		first_row_by_item = {}
+		for item in self.items:
+			if not item.s_warehouse:
+				continue
+
+			key = (
+				item.item_code if item.item_code in pending_by_item else getattr(item, "original_item", None)
+			)
+			if key not in pending_by_item:
+				continue
+
+			transfer_by_item[key] = transfer_by_item.get(key, 0.0) + flt(item.qty)
+			first_row_by_item.setdefault(key, item)
+
+		for key, transfer_qty in transfer_by_item.items():
+			pending_qty = max(0.0, pending_by_item[key])
+			if transfer_qty > pending_qty:
+				item = first_row_by_item[key]
+				frappe.throw(
+					_(
+						"Row #{0}: Cannot transfer {1} {2} of Item {3}. "
+						"Maximum transferable quantity is {4} {2}."
+					).format(
+						item.idx,
+						transfer_qty,
+						item.uom,
+						frappe.bold(item.item_code),
+						pending_qty,
+					),
+					title=_("Excess Material Transfer"),
 				)
 
 	def validate_same_source_target_warehouse_during_material_transfer(self):
@@ -1527,8 +1582,7 @@ class StockEntry(StockController):
 					{
 						"item_code": row.item_code,
 						"warehouse": row.s_warehouse,
-						"posting_date": self.posting_date,
-						"posting_time": self.posting_time,
+						"posting_datetime": get_combine_datetime(self.posting_date, self.posting_time),
 						"voucher_type": self.doctype,
 						"voucher_detail_no": row.name,
 						"qty": row.transfer_qty * -1,
@@ -2006,12 +2060,17 @@ class StockEntry(StockController):
 				] += flt(t.base_amount * multiply_based_on) / divide_based_on
 
 		if item_account_wise_additional_cost:
+			precision = self.get_debit_field_precision()
+
 			for d in self.get("items"):
 				for account, amount in item_account_wise_additional_cost.get(
 					(d.item_code, d.name), {}
 				).items():
 					if not amount:
 						continue
+
+					amount["amount"] = flt(amount["amount"], precision)
+					amount["base_amount"] = flt(amount["base_amount"], precision)
 
 					gl_entries.append(
 						self.get_gl_dict(
@@ -2467,9 +2526,24 @@ class StockEntry(StockController):
 				):
 					self.get_unconsumed_raw_materials()
 
+				elif self.pro_doc and (
+					self.purpose == "Manufacture" or self.purpose == "Material Consumption for Manufacture"
+				):
+					if not self.fg_completed_qty:
+						frappe.throw(_("{0} is mandatory").format(_(self.meta.get_label("fg_completed_qty"))))
+
+					item_dict = self.get_work_order_raw_materials(self.fg_completed_qty)
+
+					for item in item_dict.values():
+						if self.pro_doc.from_wip_warehouse:
+							item["from_warehouse"] = self.pro_doc.wip_warehouse
+						item["to_warehouse"] = ""
+
+					self.add_to_stock_entry_detail(item_dict)
+
 				else:
 					if not self.fg_completed_qty:
-						frappe.throw(_("Manufacturing Quantity is mandatory"))
+						frappe.throw(_("{0} is mandatory").format(_(self.meta.get_label("fg_completed_qty"))))
 
 					item_dict = self.get_bom_raw_materials(self.fg_completed_qty)
 
@@ -2721,6 +2795,56 @@ class StockEntry(StockController):
 				item.uom = alternative_item_data.uom
 				item.conversion_factor = alternative_item_data.conversion_factor
 				item.description = alternative_item_data.description
+
+		return item_dict
+
+	def get_work_order_raw_materials(self, qty):
+		item_dict = frappe._dict()
+
+		used_alternative_items = get_used_alternative_items(
+			subcontract_order_field=self.subcontract_data.order_field, work_order=self.work_order
+		)
+
+		for d in self.pro_doc.get("required_items"):
+			item_qty = flt(
+				(d.required_qty / self.pro_doc.qty) * qty, frappe.get_precision("Stock Entry Detail", "qty")
+			)
+			from_warehouse = (
+				d.source_warehouse
+				if self.pro_doc.skip_transfer and not self.pro_doc.from_wip_warehouse
+				else self.from_warehouse or d.source_warehouse
+			)
+
+			item_row = frappe._dict(
+				{
+					"item_code": d.item_code,
+					"item_name": d.item_name,
+					"description": d.description,
+					"qty": item_qty,
+					"stock_uom": d.stock_uom,
+					"uom": d.stock_uom,
+					"conversion_factor": 1,
+					"from_warehouse": from_warehouse,
+					"allow_alternative_item": d.allow_alternative_item
+					and self.pro_doc.allow_alternative_item,
+				}
+			)
+
+			if d.item_code in used_alternative_items:
+				alt = used_alternative_items.get(d.item_code)
+				item_row.update(
+					{
+						"item_code": alt.item_code,
+						"item_name": alt.item_name,
+						"stock_uom": alt.stock_uom,
+						"uom": alt.uom,
+						"conversion_factor": alt.conversion_factor,
+						"description": alt.description,
+						"original_item": d.item_code,
+					}
+				)
+
+			item_dict[d.item_code] = item_row
 
 		return item_dict
 
@@ -3410,10 +3534,12 @@ class StockEntry(StockController):
 	def update_subcontracting_order_status(self):
 		if self.subcontracting_order and self.purpose in ["Send to Subcontractor", "Material Transfer"]:
 			from erpnext.subcontracting.doctype.subcontracting_order.subcontracting_order import (
-				update_subcontracting_order_status,
+				set_subcontracting_order_status,
 			)
 
-			update_subcontracting_order_status(self.subcontracting_order)
+			# Trusted submit/cancel flow — a Stock operation must not require Subcontracting Order
+			# write permission, so use the no-check internal helper (not the whitelisted boundary).
+			set_subcontracting_order_status(self.subcontracting_order)
 
 	def update_pick_list_status(self):
 		from erpnext.stock.doctype.pick_list.pick_list import update_pick_list_status
@@ -3991,8 +4117,7 @@ def create_serial_and_batch_bundle(parent_doc, row, child, type_of_transaction=N
 			"item_code": child.item_code,
 			"warehouse": child.warehouse,
 			"type_of_transaction": type_of_transaction,
-			"posting_date": parent_doc.posting_date,
-			"posting_time": parent_doc.posting_time,
+			"posting_datetime": get_combine_datetime(parent_doc.posting_date, parent_doc.posting_time),
 		}
 	)
 
@@ -4049,13 +4174,19 @@ def get_batchwise_serial_nos(item_code, row):
 
 
 def get_transferred_qty(material_request):
-	sed = DocType("Stock Entry Detail")
+	from pypika import Case
+
+	se = frappe.qb.DocType("Stock Entry")
+	sed = frappe.qb.DocType("Stock Entry Detail")
+	completed_qty = Case().when(se.add_to_transit == 1, sed.transferred_qty).else_(sed.transfer_qty)
 
 	query = (
 		frappe.qb.from_(sed)
+		.inner_join(se)
+		.on(se.name == sed.parent)
 		.select(
 			Sum(sed.transfer_qty).as_("transfer_qty"),
-			Sum(sed.transferred_qty).as_("transferred_qty"),
+			Sum(completed_qty).as_("transferred_qty"),
 		)
 		.where((sed.material_request == material_request) & (sed.docstatus == 1))
 	).run(as_dict=True)
